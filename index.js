@@ -59,25 +59,41 @@ app.post("/webhook", async (req, res) => {
 
     // Interactive messages (list buttons)
     if (message.type === "interactive") {
-      const selection = message.interactive.list_reply;
-      console.log("🎯 User selected:", selection);
+     const selection = message.interactive.list_reply;
+     console.log("🎯 User selected:", selection);
 
+     // Map slot IDs to Zoho times
+     let fromTime, toTime;
+     if (selection.id === "slot_10am") {
+       fromTime = "16-Sep-2025 10:00:00";
+       toTime = "16-Sep-2025 10:30:00";
+     } else if (selection.id === "slot_2pm") {
+       fromTime = "16-Sep-2025 14:00:00";
+       toTime = "16-Sep-2025 14:30:00";
+     } else if (selection.id === "slot_6pm") {
+       fromTime = "16-Sep-2025 18:00:00";
+       toTime = "16-Sep-2025 18:30:00";
+     } else {
+       console.log("⚠️ Unknown selection id:", selection.id);
+       return res.sendStatus(400); // stop execution if invalid
+     }
 
-      const form = new FormData();
-      form.append("service_id", SERVICE_ID);
-      form.append("from_time", fromTime);
-      form.append("to_time", toTime);
-      form.append("timezone", "Asia/Kolkata");
-      form.append(
-        "customer_details",
-        JSON.stringify({
-          name: "John",
-          email: "destinations694@gmail.com",
-          phone_number: from,
-        })
-      );
-      form.append("notes", "Booked via WhatsApp bot");
-      form.append("payment_info", JSON.stringify({ cost_paid: "0.00" }));
+     // Now create FormData with defined times
+     const form = new FormData();
+     form.append("service_id", SERVICE_ID);
+     form.append("from_time", fromTime);
+     form.append("to_time", toTime);
+     form.append("timezone", "Asia/Kolkata");
+     form.append(
+       "customer_details",
+       JSON.stringify({
+         name: "John",
+         email: "destinations694@gmail.com",
+         phone_number: from,
+       })
+     );
+     form.append("notes", "Booked via WhatsApp bot");
+     form.append("payment_info", JSON.stringify({ cost_paid: "0.00" }));
 
       const zohoResp = await fetch(
         "https://www.zohoapis.in/bookings/v1/json/appointment",
