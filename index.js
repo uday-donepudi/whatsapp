@@ -98,14 +98,27 @@ app.post("/webhook", async (req, res) => {
       );
 
       const zohoResp = await fetch(
-        "https://www.zohoapis.in/bookings/v1/json/appointments",
+        "https://www.zohoapis.in/bookings/v1/json/appointment",
         {
           method: "POST",
           headers: { Authorization: ZOHO_TOKEN },
           body: formData,
         }
       );
-      const zohoData = await zohoResp.json();
+      let zohoData;
+      try {
+        if (zohoResp.ok) {
+          zohoData = await zohoResp.json();
+        } else {
+          const text = await zohoResp.text();
+          console.error("❌ Zoho API error:", zohoResp.status, text);
+          zohoData = {};
+        }
+      } catch (err) {
+        console.error("❌ Failed to parse Zoho response:", err);
+        zohoData = {};
+      }
+
       console.log("✅ Zoho Response:", zohoData);
 
       const meetingLink =
