@@ -104,19 +104,18 @@ app.post("/webhook", async (req, res) => {
         }
       );
 
+      const zohoText = await zohoResp.text();
+      console.log("Zoho Status:", zohoResp.status);
+      console.log("Zoho Body:", zohoText);
+
       let zohoData;
       try {
-        if (zohoResp.ok) {
-          zohoData = await zohoResp.json();
-        } else {
-          const text = await zohoResp.text();
-          console.error("❌ Zoho API error:", zohoResp.status, text);
-          zohoData = {};
-        }
+        zohoData = JSON.parse(zohoText);
       } catch (err) {
         console.error("❌ Failed to parse Zoho response:", err);
         zohoData = {};
       }
+
 
       console.log("✅ Zoho Response:", zohoData);
 
