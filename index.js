@@ -1,3 +1,4 @@
+import FormData from "form-data";
 // index.js
 import express from "express";
 import bodyParser from "body-parser";
@@ -61,27 +62,13 @@ app.post("/webhook", async (req, res) => {
       const selection = message.interactive.list_reply;
       console.log("🎯 User selected:", selection);
 
-      let fromTime, toTime;
-      if (selection.id === "slot_10am") {
-        fromTime = "16-Sep-2025 10:00:00";
-        toTime = "16-Sep-2025 10:30:00";
-      } else if (selection.id === "slot_2pm") {
-        fromTime = "16-Sep-2025 14:00:00";
-        toTime = "16-Sep-2025 14:30:00";
-      } else if (selection.id === "slot_6pm") {
-        fromTime = "16-Sep-2025 18:00:00";
-        toTime = "16-Sep-2025 18:30:00";
-      } else {
-        console.log("⚠️ Unknown selection id:", selection.id);
-      }
 
-      // ✅ Book in Zoho
-      const formData = new URLSearchParams();
-      formData.append("service_id", SERVICE_ID);
-      formData.append("from_time", fromTime);
-      formData.append("to_time", toTime);
-      formData.append("timezone", "Asia/Kolkata");
-      formData.append(
+      const form = new FormData();
+      form.append("service_id", SERVICE_ID);
+      form.append("from_time", fromTime);
+      form.append("to_time", toTime);
+      form.append("timezone", "Asia/Kolkata");
+      form.append(
         "customer_details",
         JSON.stringify({
           name: "John",
@@ -89,22 +76,18 @@ app.post("/webhook", async (req, res) => {
           phone_number: from,
         })
       );
-      formData.append("notes", "Booked via WhatsApp bot");
-      formData.append("payment_info", JSON.stringify({ cost_paid: "0.00" }));
-
-      console.log(
-        "📦 Sending booking request to Zoho with data:",
-        formData.toString()
-      );
+      form.append("notes", "Booked via WhatsApp bot");
+      form.append("payment_info", JSON.stringify({ cost_paid: "0.00" }));
 
       const zohoResp = await fetch(
         "https://www.zohoapis.in/bookings/v1/json/appointment",
         {
           method: "POST",
-          headers: { Authorization: ZOHO_TOKEN },
-          body: formData,
+          headers: { Authorization: `Zoho-oauthtoken ${ZOHO_TOKEN}` },
+          body: form,
         }
       );
+
       let zohoData;
       try {
         if (zohoResp.ok) {
