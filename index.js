@@ -67,6 +67,8 @@ app.post("/webhook", async (req, res) => {
       console.log("📝 Message type:", message.type);
 
       // Interactive messages (list buttons)
+      // Fixed Zoho Bookings payload - replace your interactive message handler
+
       if (message.type === "interactive") {
         const selection = message.interactive.list_reply;
         console.log("🎯 User selected:", selection);
@@ -91,20 +93,22 @@ app.post("/webhook", async (req, res) => {
             return res.sendStatus(400);
         }
 
-        // Prepare payload for Zoho
+        // FIXED: Proper payload structure for Zoho Bookings
         const payload = {
           service_id: SERVICE_ID,
           from_time: fromTime,
           to_time: toTime,
           timezone: "Asia/Kolkata",
-          customer_details: {
-            name: "John",
-            email: "destinations694@gmail.com",
-            phone_number: from,
-          },
+          // CHANGED: customer_details should be a flat object, not nested
+          customer_name: "John Doe",
+          customer_email: "destinations694@gmail.com",
+          customer_phone: from,
           notes: "Booked via WhatsApp bot",
-          payment_info: { cost_paid: "0.00" },
+          // OPTIONAL: Remove payment_info if not needed
+          // payment_info: { cost_paid: "0.00" },
         };
+
+        console.log("📤 Sending to Zoho:", JSON.stringify(payload, null, 2));
 
         const zohoResp = await fetch(
           "https://www.zohoapis.in/bookings/v1/json/appointment",
@@ -130,9 +134,19 @@ app.post("/webhook", async (req, res) => {
           zohoData = {};
         }
 
-        const meetingLink =
-          zohoData?.data?.[0]?.appointment_url ||
-          "Check your email for details";
+        // Check for success/failure
+        let meetingLink = "Check your email for details";
+        let confirmationMessage = "";
+
+        if (zohoData?.response?.status === "success") {
+          meetingLink = zohoData?.data?.[0]?.appointment_url || meetingLink;
+          confirmationMessage = `✅ Your meeting is booked!\n📅 Slot: ${selection.title}\n🔗 Join here: ${meetingLink}`;
+        } else {
+          // Handle error
+          const errorMsg = zohoData?.response?.errormessage || "Unknown error";
+          console.error("❌ Zoho booking failed:", errorMsg);
+          confirmationMessage = `❌ Sorry, booking failed. Please try again or contact support.\nError: ${errorMsg}`;
+        }
 
         // Send confirmation to WhatsApp
         const whatsappResp = await fetch(
@@ -148,7 +162,7 @@ app.post("/webhook", async (req, res) => {
               to: from,
               type: "text",
               text: {
-                body: `✅ Your meeting is booked!\n📅 Slot: ${selection.title}\n🔗 Join here: ${meetingLink}`,
+                body: confirmationMessage,
               },
             }),
           }
