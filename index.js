@@ -1,4 +1,3 @@
-import FormData from "form-data";
 // index.js
 import express from "express";
 import bodyParser from "body-parser";
@@ -59,48 +58,49 @@ app.post("/webhook", async (req, res) => {
 
     // Interactive messages (list buttons)
     if (message.type === "interactive") {
-     const selection = message.interactive.list_reply;
-     console.log("🎯 User selected:", selection);
+      const selection = message.interactive.list_reply;
+      console.log("🎯 User selected:", selection);
 
-     // Map slot IDs to Zoho times
-     let fromTime, toTime;
-     if (selection.id === "slot_10am") {
-       fromTime = "16-Sep-2025 10:00:00";
-       toTime = "16-Sep-2025 10:30:00";
-     } else if (selection.id === "slot_2pm") {
-       fromTime = "16-Sep-2025 14:00:00";
-       toTime = "16-Sep-2025 14:30:00";
-     } else if (selection.id === "slot_6pm") {
-       fromTime = "16-Sep-2025 18:00:00";
-       toTime = "16-Sep-2025 18:30:00";
-     } else {
-       console.log("⚠️ Unknown selection id:", selection.id);
-       return res.sendStatus(400); // stop execution if invalid
-     }
+      // Map slot IDs to Zoho times
+      let fromTime, toTime;
+      if (selection.id === "slot_10am") {
+        fromTime = "16-Sep-2025 10:00:00";
+        toTime = "16-Sep-2025 10:30:00";
+      } else if (selection.id === "slot_2pm") {
+        fromTime = "16-Sep-2025 14:00:00";
+        toTime = "16-Sep-2025 14:30:00";
+      } else if (selection.id === "slot_6pm") {
+        fromTime = "16-Sep-2025 18:00:00";
+        toTime = "16-Sep-2025 18:30:00";
+      } else {
+        console.log("⚠️ Unknown selection id:", selection.id);
+        return res.sendStatus(400);
+      }
 
-     // Now create FormData with defined times
-     const form = new FormData();
-     form.append("service_id", SERVICE_ID);
-     form.append("from_time", fromTime);
-     form.append("to_time", toTime);
-     form.append("timezone", "Asia/Kolkata");
-     form.append(
-       "customer_details",
-       JSON.stringify({
-         name: "John",
-         email: "destinations694@gmail.com",
-         phone_number: from,
-       })
-     );
-     form.append("notes", "Booked via WhatsApp bot");
-     form.append("payment_info", JSON.stringify({ cost_paid: "0.00" }));
+      // ✅ JSON payload for Zoho
+      const payload = {
+        service_id: SERVICE_ID,
+        from_time: fromTime,
+        to_time: toTime,
+        timezone: "Asia/Kolkata",
+        customer_details: {
+          name: "John",
+          email: "destinations694@gmail.com",
+          phone_number: from,
+        },
+        notes: "Booked via WhatsApp bot",
+        payment_info: { cost_paid: "0.00" },
+      };
 
       const zohoResp = await fetch(
         "https://www.zohoapis.in/bookings/v1/json/appointment",
         {
           method: "POST",
-          headers: { Authorization: `Zoho-oauthtoken ${ZOHO_TOKEN}` },
-          body: form,
+          headers: {
+            Authorization: `Zoho-oauthtoken ${ZOHO_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
         }
       );
 
@@ -123,7 +123,7 @@ app.post("/webhook", async (req, res) => {
       const meetingLink =
         zohoData?.data?.[0]?.appointment_url || "Check your email for details";
 
-      console.log("📤 Sending confirmation back to WhatsApp...");
+      // Send confirmation back to WhatsApp
       const whatsappResp = await fetch(
         "https://graph.facebook.com/v17.0/735873456285955/messages",
         {
