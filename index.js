@@ -99,9 +99,67 @@ app.post("/webhook", async (req, res) => {
           },
         }),
       });
-    } else if (message.type === "text") {
-      console.log("Text message:", message.text.body);
-      // Optional: send menu here
+    }
+
+    if (message?.type === "text") {
+      const from = message.from;
+      const text = message.text.body.toLowerCase();
+
+      if (text === "book") {
+        // 👉 Send interactive menu
+        await fetch(
+          "https://graph.facebook.com/v17.0/735873456285955/messages",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              to: from,
+              type: "interactive",
+              interactive: {
+                type: "list",
+                body: { text: "📅 Please choose a meeting slot:" },
+                action: {
+                  button: "Select Slot",
+                  sections: [
+                    {
+                      title: "Available Slots",
+                      rows: [
+                        { id: "slot_10am", title: "10:00 AM - 10:30 AM" },
+                        { id: "slot_2pm", title: "2:00 PM - 2:30 PM" },
+                        { id: "slot_6pm", title: "6:00 PM - 6:30 PM" },
+                      ],
+                    },
+                  ],
+                },
+              },
+            }),
+          }
+        );
+      } else {
+        // default reply
+        await fetch(
+          "https://graph.facebook.com/v17.0/735873456285955/messages",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              to: from,
+              type: "text",
+              text: {
+                body: `👋 You said: "${text}". Reply with "book" to see slots.`,
+              },
+            }),
+          }
+        );
+      }
     }
 
     res.sendStatus(200);
