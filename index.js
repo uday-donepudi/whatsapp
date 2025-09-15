@@ -3,6 +3,7 @@ import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
+import { FormData } from "form-data";
 
 dotenv.config();
 
@@ -34,8 +35,6 @@ app.get("/webhook", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  console.log("🔹 Webhook verification attempt:", { mode, token, challenge });
-
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     console.log("✅ Verification successful");
     return res.status(200).send(challenge);
@@ -44,13 +43,6 @@ app.get("/webhook", (req, res) => {
   console.log("❌ Verification failed");
   res.sendStatus(403);
 });
-
-// ---------------------
-// Handle incoming webhook events
-// ---------------------
-// index.js
-
-// ... (keep all the code above this block the same)
 
 // ---------------------
 // Handle incoming webhook events
@@ -70,15 +62,15 @@ app.post("/webhook", async (req, res) => {
     if (value?.messages?.length) {
       const message = value.messages[0];
       const from = message.from;
-      console.log("📞 Message received from:", from);
-      console.log("📝 Message type:", message.type);
+      console.log(`📞 Message received from: ${from}, Type: ${message.type}`);
 
-      // Interactive messages (list buttons)
+      // --- Handle Interactive Message (User selects a slot) ---
       if (message.type === "interactive") {
         const selection = message.interactive.list_reply;
         console.log("🎯 User selected:", selection);
 
         let fromTime, toTime;
+        // Use a switch statement for the hardcoded slot IDs
         switch (selection.id) {
           case "slot_10am":
             fromTime = "16-Sep-2025 10:00:00";
@@ -94,32 +86,23 @@ app.post("/webhook", async (req, res) => {
             break;
           default:
             console.log("⚠️ Unknown selection id:", selection.id);
-            return res.sendStatus(400);
+            return res.sendStatus(400); // Bad request for unknown ID
         }
-        
-        // ✅ **FIX 1: Use FormData for multipart/form-data requests**
-        // We need to import this if using an older version of node-fetch
-        // For modern Node.js, `FormData` is globally available.
-        const { FormData } = await import("form-data");
-        const formData = new FormData();
 
-        // ✅ **FIX 2: Structure customer_details correctly as an object**
+        // --- Zoho Booking using FormData (The Corrected Method) ---
+        const formData = new FormData();
         const customerDetails = {
-          name: "John Doe", // Using a placeholder name
-          email: "destinations694@gmail.com", // Using a placeholder email
+          name: "WhatsApp User",
+          email: "user@example.com", // This should be a valid email
           phone_number: from,
         };
 
-        // ✅ **FIX 3: Append all fields to the FormData object**
         formData.append("service_id", SERVICE_ID);
         formData.append("from_time", fromTime);
         formData.append("to_time", toTime);
         formData.append("timezone", "Asia/Kolkata");
         formData.append("notes", "Booked via WhatsApp bot");
-
-        // **Crucially, stringify the customer_details object, like in the curl command**
         formData.append("customer_details", JSON.stringify(customerDetails));
-
 
         console.log("📤 Sending form-data to Zoho...");
 
@@ -128,11 +111,9 @@ app.post("/webhook", async (req, res) => {
           {
             method: "POST",
             headers: {
-              // ✅ **FIX 4: Remove 'Content-Type'. node-fetch will set it automatically with the correct boundary for FormData**
               Authorization: `Zoho-oauthtoken ${ZOHO_TOKEN}`,
             },
-            // ✅ **FIX 5: Send the formData object as the body**
-            body: formData, 
+            body: formData,
           }
         );
 
@@ -148,22 +129,21 @@ app.post("/webhook", async (req, res) => {
           zohoData = {};
         }
 
-        // Check for success/failure
-        let meetingLink = "Check your email for details";
+        // --- Send Confirmation to User ---
         let confirmationMessage = "";
-
         if (zohoData?.response?.status === "success") {
-          meetingLink = zohoData?.data?.[0]?.appointment_url || meetingLink;
+          const meetingLink =
+            zohoData?.data?.[0]?.appointment_url ||
+            "Check your email for details";
           confirmationMessage = `✅ Your meeting is booked!\n📅 Slot: ${selection.title}\n🔗 Join here: ${meetingLink}`;
         } else {
-          // Handle error
-          const errorMsg = zohoData?.response?.errormessage || "Unknown error";
-          console.error("❌ Zoho booking failed:", errorMsg);
-          confirmationMessage = `❌ Sorry, booking failed. Please try again or contact support.\nError: ${errorMsg}`;
+          const errorMsg =
+            zohoData?.response?.errormessage ||
+            "This slot might no longer be available.";
+          confirmationMessage = `❌ Sorry, booking failed. ${errorMsg}`;
         }
 
-        // Send confirmation to WhatsApp
-        const whatsappResp = await fetch(
+        await fetch(
           `https://graph.facebook.com/v17.0/${WHATSAPP_NUMBER_ID}/messages`,
           {
             method: "POST",
@@ -175,41 +155,94 @@ app.post("/webhook", async (req, res) => {
               messaging_product: "whatsapp",
               to: from,
               type: "text",
-              text: {
-                body: confirmationMessage,
-              },
+              text: { body: confirmationMessage },
             }),
           }
         );
-        const whatsappData = await whatsappResp.json();
-        console.log("📬 WhatsApp response:", whatsappData);
       }
-      
-      // ... (keep the text message handling part the same)
 
-      // Text messages
+      // --- Handle Text Message (User types "book") ---
       if (message.type === "text") {
-        // ... your existing code for handling "book" and other text ...
+        const text = message.text.body.toLowerCase();
+
+        if (text === "book") {
+          console.log("📋 Sending hardcoded interactive menu to user...");
+          await fetch(
+            `https://graph.facebook.com/v17.0/${WHATSAPP_NUMBER_ID}/messages`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                messaging_product: "whatsapp",
+                to: from,
+                type: "interactive",
+                interactive: {
+                  type: "list",
+                  body: { text: "📅 Please choose a meeting slot:" },
+                  action: {
+                    button: "Select Slot",
+                    sections: [
+                      {
+                        title: "Available Slots",
+                        rows: [
+                          { id: "slot_10am", title: "10:00 AM - 10:30 AM" },
+                          { id: "slot_2pm", title: "2:00 PM - 2:30 PM" },
+                          { id: "slot_6pm", title: "6:00 PM - 6:30 PM" },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              }),
+            }
+          );
+        } else {
+          // Default reply for any other text
+          await fetch(
+            `https://graph.facebook.com/v17.0/${WHATSAPP_NUMBER_ID}/messages`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                messaging_product: "whatsapp",
+                to: from,
+                type: "text",
+                text: {
+                  body: `👋 You said: "${message.text.body}". Reply with "book" to see available slots.`,
+                },
+              }),
+            }
+          );
+        }
       }
-      
       return res.sendStatus(200);
     }
 
-    // ... (keep the status updates part the same)
-
+    // --- Handle Status Updates ---
     if (value?.statuses?.length) {
-        // ... your existing code for handling statuses ...
+      const status = value.statuses[0];
+      console.log(
+        "ℹ️ Status update received:",
+        status.status,
+        "for",
+        status.recipient_id
+      );
+      return res.sendStatus(200);
     }
 
     console.log("⚠️ No message or status found in payload");
     res.sendStatus(200);
   } catch (err) {
-    console.error("❌ Error in webhook:", err);
+    console.error("❌ Error in webhook:", err.stack);
     res.sendStatus(500);
   }
 });
-
-// ... (keep the server start code the same)
 
 // ---------------------
 // Start server
