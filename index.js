@@ -2,10 +2,8 @@
 import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
-import FormData from "form-data";
 import dotenv from "dotenv";
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
@@ -50,6 +48,13 @@ app.get("/webhook", (req, res) => {
 // ---------------------
 // Handle incoming webhook events
 // ---------------------
+// index.js
+
+// ... (keep all the code above this block the same)
+
+// ---------------------
+// Handle incoming webhook events
+// ---------------------
 app.post("/webhook", async (req, res) => {
   console.log("🔥 Webhook triggered");
   console.log("📥 Raw request body:", JSON.stringify(req.body, null, 2));
@@ -73,65 +78,61 @@ app.post("/webhook", async (req, res) => {
         const selection = message.interactive.list_reply;
         console.log("🎯 User selected:", selection);
 
-        const formData = new FormData();
-
-        // Map selection to Zoho times
         let fromTime, toTime;
         switch (selection.id) {
           case "slot_10am":
-            fromTime = "17-Sep-2025 10:00:00";
-            toTime = "17-Sep-2025 10:30:00";
+            fromTime = "16-Sep-2025 10:00:00";
+            toTime = "16-Sep-2025 10:30:00";
             break;
           case "slot_2pm":
-            fromTime = "17-Sep-2025 14:00:00";
-            toTime = "17-Sep-2025 14:30:00";
+            fromTime = "16-Sep-2025 14:00:00";
+            toTime = "16-Sep-2025 14:30:00";
             break;
           case "slot_6pm":
-            fromTime = "17-Sep-2025 18:00:00";
-            toTime = "17-Sep-2025 18:30:00";
+            fromTime = "16-Sep-2025 18:00:00";
+            toTime = "16-Sep-2025 18:30:00";
             break;
           default:
             console.log("⚠️ Unknown selection id:", selection.id);
             return res.sendStatus(400);
         }
+        
+        // ✅ **FIX 1: Use FormData for multipart/form-data requests**
+        // We need to import this if using an older version of node-fetch
+        // For modern Node.js, `FormData` is globally available.
+        const { FormData } = await import("form-data");
+        const formData = new FormData();
 
-        // Create form data (matching your working Postman request)
+        // ✅ **FIX 2: Structure customer_details correctly as an object**
+        const customerDetails = {
+          name: "John Doe", // Using a placeholder name
+          email: "destinations694@gmail.com", // Using a placeholder email
+          phone_number: from,
+        };
+
+        // ✅ **FIX 3: Append all fields to the FormData object**
         formData.append("service_id", SERVICE_ID);
         formData.append("from_time", fromTime);
         formData.append("to_time", toTime);
         formData.append("timezone", "Asia/Kolkata");
-
-        // Customer details as JSON string (exactly like in Postman)
-        formData.append(
-          "customer_details",
-          JSON.stringify({
-            name: "John Doe",
-            email: "destinations694@gmail.com",
-            phone_number: from,
-          })
-        );
-
         formData.append("notes", "Booked via WhatsApp bot");
 
-        // Payment info as JSON string
-        formData.append(
-          "payment_info",
-          JSON.stringify({
-            cost_paid: "0.00",
-          })
-        );
+        // **Crucially, stringify the customer_details object, like in the curl command**
+        formData.append("customer_details", JSON.stringify(customerDetails));
 
-        console.log("📤 Sending form data to Zoho");
+
+        console.log("📤 Sending form-data to Zoho...");
 
         const zohoResp = await fetch(
           "https://www.zohoapis.in/bookings/v1/json/appointment",
           {
             method: "POST",
             headers: {
-              ...formData.getHeaders(),
-              Authorization: ZOHO_TOKEN,
+              // ✅ **FIX 4: Remove 'Content-Type'. node-fetch will set it automatically with the correct boundary for FormData**
+              Authorization: `Zoho-oauthtoken ${ZOHO_TOKEN}`,
             },
-            body: formData,
+            // ✅ **FIX 5: Send the formData object as the body**
+            body: formData, 
           }
         );
 
@@ -147,20 +148,18 @@ app.post("/webhook", async (req, res) => {
           zohoData = {};
         }
 
-        // Check for success and get meeting link
+        // Check for success/failure
         let meetingLink = "Check your email for details";
         let confirmationMessage = "";
 
         if (zohoData?.response?.status === "success") {
-          meetingLink =
-            zohoData?.data?.[0]?.appointment_url ||
-            zohoData?.response?.appointment_url ||
-            meetingLink;
+          meetingLink = zohoData?.data?.[0]?.appointment_url || meetingLink;
           confirmationMessage = `✅ Your meeting is booked!\n📅 Slot: ${selection.title}\n🔗 Join here: ${meetingLink}`;
         } else {
+          // Handle error
           const errorMsg = zohoData?.response?.errormessage || "Unknown error";
           console.error("❌ Zoho booking failed:", errorMsg);
-          confirmationMessage = `❌ Sorry, booking failed. Please try again.\nError: ${errorMsg}`;
+          confirmationMessage = `❌ Sorry, booking failed. Please try again or contact support.\nError: ${errorMsg}`;
         }
 
         // Send confirmation to WhatsApp
@@ -185,22 +184,21 @@ app.post("/webhook", async (req, res) => {
         const whatsappData = await whatsappResp.json();
         console.log("📬 WhatsApp response:", whatsappData);
       }
+      
+      // ... (keep the text message handling part the same)
 
+      // Text messages
+      if (message.type === "text") {
+        // ... your existing code for handling "book" and other text ...
+      }
+      
       return res.sendStatus(200);
     }
 
-    // ---------------------
-    // Status updates (sent/delivered/read)
-    // ---------------------
+    // ... (keep the status updates part the same)
+
     if (value?.statuses?.length) {
-      const status = value.statuses[0];
-      console.log(
-        "ℹ️ Status update received:",
-        status.status,
-        "for",
-        status.recipient_id
-      );
-      return res.sendStatus(200);
+        // ... your existing code for handling statuses ...
     }
 
     console.log("⚠️ No message or status found in payload");
@@ -210,6 +208,8 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(500);
   }
 });
+
+// ... (keep the server start code the same)
 
 // ---------------------
 // Start server
