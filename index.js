@@ -2,8 +2,10 @@
 import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
+import FormData from "form-data";
 import dotenv from "dotenv";
 
+// Load environment variables
 dotenv.config();
 
 const app = express();
@@ -67,58 +69,69 @@ app.post("/webhook", async (req, res) => {
       console.log("📝 Message type:", message.type);
 
       // Interactive messages (list buttons)
-      // Fixed Zoho Bookings payload - replace your interactive message handler
-
       if (message.type === "interactive") {
         const selection = message.interactive.list_reply;
         console.log("🎯 User selected:", selection);
+
+        const formData = new FormData();
 
         // Map selection to Zoho times
         let fromTime, toTime;
         switch (selection.id) {
           case "slot_10am":
-            fromTime = "16-Sep-2025 10:00:00";
-            toTime = "16-Sep-2025 10:30:00";
+            fromTime = "17-Sep-2025 10:00:00";
+            toTime = "17-Sep-2025 10:30:00";
             break;
           case "slot_2pm":
-            fromTime = "16-Sep-2025 14:00:00";
-            toTime = "16-Sep-2025 14:30:00";
+            fromTime = "17-Sep-2025 14:00:00";
+            toTime = "17-Sep-2025 14:30:00";
             break;
           case "slot_6pm":
-            fromTime = "16-Sep-2025 18:00:00";
-            toTime = "16-Sep-2025 18:30:00";
+            fromTime = "17-Sep-2025 18:00:00";
+            toTime = "17-Sep-2025 18:30:00";
             break;
           default:
             console.log("⚠️ Unknown selection id:", selection.id);
             return res.sendStatus(400);
         }
 
-        // FIXED: Proper payload structure for Zoho Bookings
-        const payload = {
-          service_id: SERVICE_ID,
-          from_time: fromTime,
-          to_time: toTime,
-          timezone: "Asia/Kolkata",
-          // CHANGED: customer_details should be a flat object, not nested
-          customer_name: "John Doe",
-          customer_email: "destinations694@gmail.com",
-          customer_phone: from,
-          notes: "Booked via WhatsApp bot",
-          // OPTIONAL: Remove payment_info if not needed
-          // payment_info: { cost_paid: "0.00" },
-        };
+        // Create form data (matching your working Postman request)
+        formData.append("service_id", SERVICE_ID);
+        formData.append("from_time", fromTime);
+        formData.append("to_time", toTime);
+        formData.append("timezone", "Asia/Kolkata");
 
-        console.log("📤 Sending to Zoho:", JSON.stringify(payload, null, 2));
+        // Customer details as JSON string (exactly like in Postman)
+        formData.append(
+          "customer_details",
+          JSON.stringify({
+            name: "John Doe",
+            email: "destinations694@gmail.com",
+            phone_number: from,
+          })
+        );
+
+        formData.append("notes", "Booked via WhatsApp bot");
+
+        // Payment info as JSON string
+        formData.append(
+          "payment_info",
+          JSON.stringify({
+            cost_paid: "0.00",
+          })
+        );
+
+        console.log("📤 Sending form data to Zoho");
 
         const zohoResp = await fetch(
           "https://www.zohoapis.in/bookings/v1/json/appointment",
           {
             method: "POST",
             headers: {
-              Authorization: `Zoho-oauthtoken ${ZOHO_TOKEN}`,
-              "Content-Type": "application/json",
+              ...formData.getHeaders(),
+              Authorization: ZOHO_TOKEN,
             },
-            body: JSON.stringify(payload),
+            body: formData,
           }
         );
 
@@ -134,18 +147,20 @@ app.post("/webhook", async (req, res) => {
           zohoData = {};
         }
 
-        // Check for success/failure
+        // Check for success and get meeting link
         let meetingLink = "Check your email for details";
         let confirmationMessage = "";
 
         if (zohoData?.response?.status === "success") {
-          meetingLink = zohoData?.data?.[0]?.appointment_url || meetingLink;
+          meetingLink =
+            zohoData?.data?.[0]?.appointment_url ||
+            zohoData?.response?.appointment_url ||
+            meetingLink;
           confirmationMessage = `✅ Your meeting is booked!\n📅 Slot: ${selection.title}\n🔗 Join here: ${meetingLink}`;
         } else {
-          // Handle error
           const errorMsg = zohoData?.response?.errormessage || "Unknown error";
           console.error("❌ Zoho booking failed:", errorMsg);
-          confirmationMessage = `❌ Sorry, booking failed. Please try again or contact support.\nError: ${errorMsg}`;
+          confirmationMessage = `❌ Sorry, booking failed. Please try again.\nError: ${errorMsg}`;
         }
 
         // Send confirmation to WhatsApp
@@ -169,72 +184,6 @@ app.post("/webhook", async (req, res) => {
         );
         const whatsappData = await whatsappResp.json();
         console.log("📬 WhatsApp response:", whatsappData);
-      }
-
-      // Text messages
-      if (message.type === "text") {
-        const text = message.text.body.toLowerCase();
-        console.log("💬 Text received:", text);
-
-        if (text === "book") {
-          console.log("📋 Sending interactive menu to user...");
-          const response = await fetch(
-            `https://graph.facebook.com/v17.0/${WHATSAPP_NUMBER_ID}/messages`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                messaging_product: "whatsapp",
-                to: from,
-                type: "interactive",
-                interactive: {
-                  type: "list",
-                  body: { text: "📅 Please choose a meeting slot:" },
-                  action: {
-                    button: "Select Slot",
-                    sections: [
-                      {
-                        title: "Available Slots",
-                        rows: [
-                          { id: "slot_10am", title: "10:00 AM - 10:30 AM" },
-                          { id: "slot_2pm", title: "2:00 PM - 2:30 PM" },
-                          { id: "slot_6pm", title: "6:00 PM - 6:30 PM" },
-                        ],
-                      },
-                    ],
-                  },
-                },
-              }),
-            }
-          );
-          const data = await response.json();
-          console.log("📬 WhatsApp menu response:", data);
-        } else {
-          console.log("💡 Sending default reply to user...");
-          const response = await fetch(
-            `https://graph.facebook.com/v17.0/${WHATSAPP_NUMBER_ID}/messages`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                messaging_product: "whatsapp",
-                to: from,
-                type: "text",
-                text: {
-                  body: `👋 You said: "${text}". Reply with "book" to see slots.`,
-                },
-              }),
-            }
-          );
-          const data = await response.json();
-          console.log("📬 Default reply response:", data);
-        }
       }
 
       return res.sendStatus(200);
