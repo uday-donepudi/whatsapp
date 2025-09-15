@@ -32,6 +32,9 @@ app.post("/webhook", async (req, res) => {
     const changes = entry?.changes?.[0];
     const message = changes?.value?.messages?.[0];
 
+      console.log("🔥 Webhook triggered");
+      console.log(JSON.stringify(req.body, null, 2));
+      
     if (message?.type === "interactive") {
       const from = message.from; // WhatsApp user phone
       const selection = message.interactive.list_reply;
