@@ -99,6 +99,9 @@ app.post("/webhook", async (req, res) => {
           },
         }),
       });
+    } else if (message.type === "text") {
+      console.log("Text message:", message.text.body);
+      // Optional: send menu here
     }
 
     res.sendStatus(200);
