@@ -3,7 +3,7 @@ import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
-import { FormData } from "form-data";
+import FormData from "form-data"; // CORRECTED: Use default import for CommonJS module
 
 dotenv.config();
 
