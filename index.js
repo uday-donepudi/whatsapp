@@ -73,16 +73,16 @@ app.post("/webhook", async (req, res) => {
         // Use a switch statement for the hardcoded slot IDs
         switch (selection.id) {
           case "slot_10am":
-            fromTime = "16-Sep-2025 10:00:00";
-            toTime = "16-Sep-2025 10:30:00";
+            fromTime = "18-Sep-2025 10:00:00";
+            toTime = "18-Sep-2025 10:30:00";
             break;
           case "slot_2pm":
-            fromTime = "16-Sep-2025 14:00:00";
-            toTime = "16-Sep-2025 14:30:00";
+            fromTime = "18-Sep-2025 14:00:00";
+            toTime = "18-Sep-2025 14:30:00";
             break;
           case "slot_6pm":
-            fromTime = "16-Sep-2025 18:00:00";
-            toTime = "16-Sep-2025 18:30:00";
+            fromTime = "18-Sep-2025 18:00:00";
+            toTime = "18-Sep-2025 18:30:00";
             break;
           default:
             console.log("⚠️ Unknown selection id:", selection.id);
