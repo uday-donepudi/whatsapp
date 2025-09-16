@@ -80,9 +80,9 @@ app.post("/webhook", async (req, res) => {
             fromTime = "18-Sep-2025 14:00:00";
             toTime = "18-Sep-2025 14:30:00";
             break;
-          case "slot_6pm":
-            fromTime = "18-Sep-2025 18:00:00";
-            toTime = "18-Sep-2025 18:30:00";
+          case "slot_4pm":
+            fromTime = "18-Sep-2025 16:00:00";
+            toTime = "18-Sep-2025 16:30:00";
             break;
           default:
             console.log("⚠️ Unknown selection id:", selection.id);
@@ -190,7 +190,7 @@ app.post("/webhook", async (req, res) => {
                         rows: [
                           { id: "slot_10am", title: "10:00 AM - 10:30 AM" },
                           { id: "slot_2pm", title: "2:00 PM - 2:30 PM" },
-                          { id: "slot_6pm", title: "6:00 PM - 6:30 PM" },
+                          { id: "slot_4pm", title: "4:00 PM - 4:30 PM" },
                         ],
                       },
                     ],
