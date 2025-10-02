@@ -266,15 +266,10 @@ function waConfirmation(details) {
     interactive: {
       type: "button",
       body: {
-        text: `✅ Booking confirmed!\nService: ${details.service}\nDate: ${details.date}\nTime: ${details.time}\nRef: ${details.ref}`,
+        text: `✅ Booking confirmed!\nService: ${details.service}\nDate: ${details.date}\nTime: ${details.time}\nRef: ${details.ref}\n\nView details: ${details.url}`,
       },
       action: {
         buttons: [
-          {
-            type: "url",
-            url: details.url,
-            title: "View details",
-          },
           {
             type: "reply",
             reply: { id: "cancel_booking", title: "Cancel" },
