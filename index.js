@@ -567,7 +567,10 @@ app.post("/webhook", async (req, res) => {
       session.customerName = name;
       await sendWhatsApp(
         from,
-        waTextPrompt("Enter your email address.", "email_prompt")
+        waTextPrompt(
+          "Enter your email address (e.g., john.doe@example.com):",
+          "email_prompt"
+        )
       );
       session.step = "AWAIT_EMAIL";
       session.emailAttempts = 0;
@@ -589,14 +592,20 @@ app.post("/webhook", async (req, res) => {
         }
         await sendWhatsApp(
           from,
-          waTextPrompt("Email invalid. Please enter again.", "email_prompt")
+          waTextPrompt(
+            "Email invalid. Please enter again (e.g., john.doe@example.com):",
+            "email_prompt"
+          )
         );
         return res.sendStatus(200);
       }
       session.customerEmail = email;
       await sendWhatsApp(
         from,
-        waTextPrompt("Enter your phone number.", "phone_prompt")
+        waTextPrompt(
+          "Enter your phone number (e.g., 9876543210 or +919876543210):",
+          "phone_prompt"
+        )
       );
       session.step = "AWAIT_PHONE";
       session.phoneAttempts = 0;
@@ -618,7 +627,10 @@ app.post("/webhook", async (req, res) => {
         }
         await sendWhatsApp(
           from,
-          waTextPrompt("Phone invalid. Please enter again.", "phone_prompt")
+          waTextPrompt(
+            "Phone invalid. Please enter again (e.g., 9876543210 or +919876543210):",
+            "phone_prompt"
+          )
         );
         return res.sendStatus(200);
       }
@@ -669,21 +681,28 @@ app.post("/webhook", async (req, res) => {
         zohoData = {};
       }
       log("Zoho appointment", zohoResp.status, zohoText);
-      if (zohoData?.response?.status === "success") {
-        const appt = zohoData.response.returnvalue.data[0];
+      if (
+        zohoData?.response?.status === "success" &&
+        zohoData.response.returnvalue?.status === "success"
+      ) {
+        const appt = zohoData.response.returnvalue;
         await sendWhatsApp(
           from,
           waConfirmation({
-            service: session.selectedService.name,
-            date: session.selectedDate.label,
-            time: session.selectedSlot.label,
-            ref: appt.id,
-            url: appt.appointment_url,
+            service: appt.service_name || session.selectedService.name,
+            date: appt.start_time || session.selectedDate.label,
+            time: appt.duration || session.selectedSlot.label,
+            ref: appt.booking_id || appt.id || "N/A",
+            url: appt.summary_url || appt.appointment_url || "",
           })
         );
         clearSession(from);
       } else {
-        await sendWhatsApp(from, waError("Booking failed. Please try again."));
+        const zohoMsg =
+          zohoData?.response?.returnvalue?.message ||
+          zohoData?.response?.message ||
+          "Booking failed. Please try again.";
+        await sendWhatsApp(from, waError(zohoMsg));
         clearSession(from);
       }
       return res.sendStatus(200);
