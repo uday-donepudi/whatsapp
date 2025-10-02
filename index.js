@@ -428,7 +428,6 @@ app.post("/webhook", async (req, res) => {
         const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateStr}`;
         const { data } = await fetchZoho(slotUrl);
         const slots = data?.response?.returnvalue?.data;
-        // Only add if slots is an array and has at least one slot
         if (Array.isArray(slots) && slots.length > 0) {
           availableDates.push({
             id: `date_${dateStr}`,
@@ -449,8 +448,8 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Show first 10 dates, add "Show more" if needed
-      const pageSize = 10;
+      // Show first 9 dates, add "Show more" as 10th row if needed
+      const pageSize = 9;
       const pageDates = availableDates.slice(0, pageSize);
       let waMsg = waDateList(pageDates, monthObj.label);
 
@@ -476,7 +475,7 @@ app.post("/webhook", async (req, res) => {
 
       // Handle "Show more dates"
       if (dateId === "show_more_dates") {
-        const pageSize = 10;
+        const pageSize = 9;
         session.datePage = (session.datePage || 0) + 1;
         const start = session.datePage * pageSize;
         const pageDates = session.availableDates.slice(start, start + pageSize);
