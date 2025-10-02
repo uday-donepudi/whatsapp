@@ -167,7 +167,7 @@ function waServiceList(services) {
             title: "Services",
             rows: services.slice(0, 10).map((s) => ({
               id: s.id,
-              title: s.name.length > 24 ? s.name.slice(0, 21) + "..." : s.name, // Truncate to 24 chars
+              title: s.name.length > 24 ? s.name.slice(0, 21) + "..." : s.name,
               description: s.duration || s.service_type,
             })),
           },
@@ -188,9 +188,10 @@ function waMonthList(months) {
         sections: [
           {
             title: "Months",
-            rows: months.map((m) => ({
+            rows: months.slice(0, 10).map((m) => ({
               id: m.id,
-              title: m.label,
+              title:
+                m.label.length > 24 ? m.label.slice(0, 21) + "..." : m.label,
             })),
           },
         ],
@@ -210,9 +211,10 @@ function waDateList(dates, monthLabel) {
         sections: [
           {
             title: "Dates",
-            rows: dates.map((d) => ({
+            rows: dates.slice(0, 10).map((d) => ({
               id: d.id,
-              title: d.label,
+              title:
+                d.label.length > 24 ? d.label.slice(0, 21) + "..." : d.label,
               description: `${d.slots} slots`,
             })),
           },
@@ -233,9 +235,10 @@ function waSlotList(slots, dateLabel) {
         sections: [
           {
             title: "Slots",
-            rows: slots.map((s) => ({
+            rows: slots.slice(0, 10).map((s) => ({
               id: s.id,
-              title: s.label,
+              title:
+                s.label.length > 24 ? s.label.slice(0, 21) + "..." : s.label,
             })),
           },
         ],
