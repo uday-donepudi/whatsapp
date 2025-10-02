@@ -427,8 +427,9 @@ app.post("/webhook", async (req, res) => {
           .substr(0, 3)}-${year}`;
         const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateStr}`;
         const { data } = await fetchZoho(slotUrl);
-        const slots = data?.response?.returnvalue?.data || [];
-        if (slots.length) {
+        const slots = data?.response?.returnvalue?.data;
+        // Only add if slots is an array and has at least one slot
+        if (Array.isArray(slots) && slots.length > 0) {
           availableDates.push({
             id: `date_${dateStr}`,
             label: dateStr,
@@ -436,6 +437,9 @@ app.post("/webhook", async (req, res) => {
           });
         }
       }
+      session.availableDates = availableDates;
+      session.datePage = 0; // pagination index
+
       if (!availableDates.length) {
         await sendWhatsApp(
           from,
@@ -444,19 +448,50 @@ app.post("/webhook", async (req, res) => {
         session.step = "AWAIT_MONTH";
         return res.sendStatus(200);
       }
-      session.availableDates = availableDates;
-      await sendWhatsApp(from, waDateList(availableDates, monthObj.label));
+
+      // Show first 10 dates, add "Show more" if needed
+      const pageSize = 10;
+      const pageDates = availableDates.slice(0, pageSize);
+      let waMsg = waDateList(pageDates, monthObj.label);
+
+      if (availableDates.length > pageSize) {
+        waMsg.interactive.action.sections[0].rows.push({
+          id: "show_more_dates",
+          title: "Show more dates...",
+        });
+      }
+
+      await sendWhatsApp(from, waMsg);
       session.step = "AWAIT_DATE";
       return res.sendStatus(200);
     }
 
-    // Step 5: Date selected
+    // Step 5: Date selected or Show more
     if (
       session.step === "AWAIT_DATE" &&
       msg.type === "interactive" &&
       msg.interactive.list_reply
     ) {
       const dateId = msg.interactive.list_reply.id;
+
+      // Handle "Show more dates"
+      if (dateId === "show_more_dates") {
+        const pageSize = 10;
+        session.datePage = (session.datePage || 0) + 1;
+        const start = session.datePage * pageSize;
+        const pageDates = session.availableDates.slice(start, start + pageSize);
+        let waMsg = waDateList(pageDates, session.selectedMonth.label);
+
+        if (session.availableDates.length > start + pageSize) {
+          waMsg.interactive.action.sections[0].rows.push({
+            id: "show_more_dates",
+            title: "Show more dates...",
+          });
+        }
+        await sendWhatsApp(from, waMsg);
+        return res.sendStatus(200);
+      }
+
       const dateObj = (session.availableDates || []).find(
         (d) => d.id === dateId
       );
@@ -469,7 +504,9 @@ app.post("/webhook", async (req, res) => {
       // Fetch slots for this date
       const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateObj.label}`;
       const { data } = await fetchZoho(slotUrl);
-      const slots = data?.response?.returnvalue?.data || [];
+      const slots = Array.isArray(data?.response?.returnvalue?.data)
+        ? data.response.returnvalue.data
+        : [];
       if (!slots.length) {
         await sendWhatsApp(
           from,
