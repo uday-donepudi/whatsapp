@@ -762,16 +762,18 @@ app.post("/webhook", async (req, res) => {
       const zohoText = await zohoResp.text();
       let zohoData;
       try {
-        zohoData = JSON.parse(zohoText);
-      } catch {
+        // Remove invisible characters and whitespace
+        zohoData = JSON.parse(zohoText.trim());
+      } catch (err) {
+        log("Zoho JSON.parse ERROR", err.message, "Raw Text:", zohoText);
         zohoData = {};
       }
-      log("Zoho appointment", zohoResp.status, zohoText);
+      log("Zoho appointment", zohoResp.status, JSON.stringify(zohoData));
 
       // --- Parse Zoho appointment response ---
       if (
         zohoData?.response?.status === "success" &&
-        zohoData.response.returnvalue?.status === "success"
+        zohoData.response.returnvalue?.status === "upcoming"
       ) {
         const appt = zohoData.response.returnvalue;
         await sendWhatsApp(
