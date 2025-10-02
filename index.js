@@ -714,6 +714,8 @@ app.post("/webhook", async (req, res) => {
         zohoData = {};
       }
       log("Zoho appointment", zohoResp.status, zohoText);
+
+      // --- FIXED: Correctly parse Zoho appointment response ---
       if (
         zohoData?.response?.status === "success" &&
         zohoData.response.returnvalue?.status === "success"
