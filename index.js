@@ -167,7 +167,7 @@ function waServiceList(services) {
             title: "Services",
             rows: services.slice(0, 20).map((s) => ({
               id: s.id,
-              title: s.name,
+              title: s.name.length > 24 ? s.name.slice(0, 21) + "..." : s.name, // Truncate to 24 chars
               description: s.duration || s.service_type,
             })),
           },
