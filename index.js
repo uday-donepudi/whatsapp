@@ -428,11 +428,12 @@ app.post("/webhook", async (req, res) => {
         const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateStr}`;
         const { data } = await fetchZoho(slotUrl);
         const slots = data?.response?.returnvalue?.data;
+        // Only add if slots is an array and has at least one slot
         if (Array.isArray(slots) && slots.length > 0) {
           availableDates.push({
             id: `date_${dateStr}`,
             label: dateStr,
-            slots: slots.length,
+            slots: slots.length, // This is now always accurate
           });
         }
       }
@@ -519,18 +520,50 @@ app.post("/webhook", async (req, res) => {
         label: s,
         time: s,
       }));
-      await sendWhatsApp(from, waSlotList(session.slots, dateObj.label));
+      session.slotPage = 0; // pagination index for slots
+
+      // Show first 9 slots, add "Show more" as 10th row if needed
+      const slotPageSize = 9;
+      const pageSlots = session.slots.slice(0, slotPageSize);
+      let waMsg = waSlotList(pageSlots, dateObj.label);
+
+      if (session.slots.length > slotPageSize) {
+        waMsg.interactive.action.sections[0].rows.push({
+          id: "show_more_slots",
+          title: "Show more slots...",
+        });
+      }
+      await sendWhatsApp(from, waMsg);
       session.step = "AWAIT_SLOT";
       return res.sendStatus(200);
     }
 
-    // Step 6: Slot selected
+    // Step 6: Slot selected or Show more
     if (
       session.step === "AWAIT_SLOT" &&
       msg.type === "interactive" &&
       msg.interactive.list_reply
     ) {
       const slotId = msg.interactive.list_reply.id;
+
+      // Handle "Show more slots"
+      if (slotId === "show_more_slots") {
+        const slotPageSize = 9;
+        session.slotPage = (session.slotPage || 0) + 1;
+        const start = session.slotPage * slotPageSize;
+        const pageSlots = session.slots.slice(start, start + slotPageSize);
+        let waMsg = waSlotList(pageSlots, session.selectedDate.label);
+
+        if (session.slots.length > start + slotPageSize) {
+          waMsg.interactive.action.sections[0].rows.push({
+            id: "show_more_slots",
+            title: "Show more slots...",
+          });
+        }
+        await sendWhatsApp(from, waMsg);
+        return res.sendStatus(200);
+      }
+
       const slotObj = (session.slots || []).find((s) => s.id === slotId);
       if (!slotObj) {
         await sendWhatsApp(from, waError("Invalid slot. Please try again."));
@@ -568,7 +601,7 @@ app.post("/webhook", async (req, res) => {
       await sendWhatsApp(
         from,
         waTextPrompt(
-          "Enter your email address (e.g., john.doe@example.com):",
+          "Enter your email address (e.g., user@example.com):",
           "email_prompt"
         )
       );
@@ -593,7 +626,7 @@ app.post("/webhook", async (req, res) => {
         await sendWhatsApp(
           from,
           waTextPrompt(
-            "Email invalid. Please enter again (e.g., john.doe@example.com):",
+            "Email invalid. Please enter again (e.g., user@example.com):",
             "email_prompt"
           )
         );
@@ -603,7 +636,7 @@ app.post("/webhook", async (req, res) => {
       await sendWhatsApp(
         from,
         waTextPrompt(
-          "Enter your phone number (e.g., 9876543210 or +919876543210):",
+          "Enter your phone number (e.g., 9xxxxxxxxx or +91xxxxxxxxxx):",
           "phone_prompt"
         )
       );
@@ -628,7 +661,7 @@ app.post("/webhook", async (req, res) => {
         await sendWhatsApp(
           from,
           waTextPrompt(
-            "Phone invalid. Please enter again (e.g., 9876543210 or +919876543210):",
+            "Phone invalid. Please enter again (e.g., 9xxxxxxxxx or +91xxxxxxxxxx):",
             "phone_prompt"
           )
         );
