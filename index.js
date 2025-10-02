@@ -668,27 +668,78 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
       session.customerPhone = phone;
-      // All info collected, create appointment
+
+      // --- Build Zoho appointment form-data ---
       const formData = new FormData();
       formData.append("service_id", session.selectedService.id);
-      formData.append(
-        "from_time",
-        `${session.selectedDate.label} ${session.selectedSlot.time}`
+
+      // Dynamically add staff_id, group_id, or resource_id
+      const stype = (session.selectedService.service_type || "").toUpperCase();
+      if (
+        (stype === "APPOINTMENT" ||
+          stype === "ONE-ON-ONE" ||
+          stype === "ONE TO ONE") &&
+        Array.isArray(session.selectedService.assigned_staffs) &&
+        session.selectedService.assigned_staffs.length > 0
+      ) {
+        formData.append("staff_id", session.selectedService.assigned_staffs[0]);
+      }
+      if (
+        (stype === "GROUP" ||
+          stype === "GROUP BOOKING" ||
+          stype === "COLLECTIVE") &&
+        Array.isArray(session.selectedService.assigned_groups) &&
+        session.selectedService.assigned_groups.length > 0
+      ) {
+        formData.append("group_id", session.selectedService.assigned_groups[0]);
+      }
+      if (
+        stype === "RESOURCE" &&
+        Array.isArray(session.selectedService.assigned_resources) &&
+        session.selectedService.assigned_resources.length > 0
+      ) {
+        formData.append(
+          "resource_id",
+          session.selectedService.assigned_resources[0]
+        );
+      }
+
+      // Format from_time and to_time as dd-MMM-yyyy HH:mm:ss
+      const dateLabel = session.selectedDate.label; // e.g. 07-Nov-2025
+      const slotTime = session.selectedSlot.label; // e.g. 10:30 AM or 10:30
+      // Convert slotTime to 24-hour HH:mm:ss
+      let [hour, minute] = slotTime.split(":");
+      let ampm = "";
+      if (minute && minute.includes(" ")) {
+        [minute, ampm] = minute.split(" ");
+        hour = parseInt(hour, 10);
+        if (ampm.toUpperCase() === "PM" && hour < 12) hour += 12;
+        if (ampm.toUpperCase() === "AM" && hour === 12) hour = 0;
+      }
+      hour = hour.toString().padStart(2, "0");
+      minute = minute ? minute.padStart(2, "0") : "00";
+      const fromTimeStr = `${dateLabel} ${hour}:${minute}:00`;
+
+      // Calculate to_time based on duration (in minutes)
+      let duration = 30;
+      if (session.selectedService.duration) {
+        const match = session.selectedService.duration.match(/(\d+)/);
+        if (match) duration = parseInt(match[1], 10);
+      }
+      const fromDateObj = new Date(
+        `${dateLabel} ${hour}:${minute}:00 GMT+0530`
       );
-      // Calculate to_time based on duration (assume 30 mins if not provided)
-      const duration = parseInt(session.selectedService.duration) || 30;
-      const [h, m] = session.selectedSlot.time.split(":").map(Number);
-      const fromDate = new Date(
-        `${session.selectedDate.label} ${h}:${m}:00 GMT+0530`
-      );
-      const toDate = new Date(fromDate.getTime() + duration * 60000);
-      const toTime = toDate.toLocaleTimeString("en-GB", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZone: "Asia/Kolkata",
-      });
-      formData.append("to_time", `${session.selectedDate.label} ${toTime}`);
+      const toDateObj = new Date(fromDateObj.getTime() + duration * 60000);
+      const toHour = toDateObj.getHours().toString().padStart(2, "0");
+      const toMinute = toDateObj.getMinutes().toString().padStart(2, "0");
+      const toDay = toDateObj.getDate().toString().padStart(2, "0");
+      const toMonth = toDateObj.toLocaleString("en-GB", { month: "short" });
+      const toYear = toDateObj.getFullYear();
+      const toDateLabel = `${toDay}-${toMonth}-${toYear}`;
+      const toTimeStr = `${toDateLabel} ${toHour}:${toMinute}:00`;
+
+      formData.append("from_time", fromTimeStr);
+      formData.append("to_time", toTimeStr);
       formData.append("timezone", "Asia/Kolkata");
       formData.append("notes", "Booked via WhatsApp");
       formData.append(
@@ -699,6 +750,8 @@ app.post("/webhook", async (req, res) => {
           phone_number: session.customerPhone,
         })
       );
+
+      // --- Make Zoho appointment API call ---
       const zohoResp = await fetch(`${ZOHO_BASE}/appointment`, {
         method: "POST",
         headers: {
@@ -715,7 +768,7 @@ app.post("/webhook", async (req, res) => {
       }
       log("Zoho appointment", zohoResp.status, zohoText);
 
-      // --- FIXED: Correctly parse Zoho appointment response ---
+      // --- Parse Zoho appointment response ---
       if (
         zohoData?.response?.status === "success" &&
         zohoData.response.returnvalue?.status === "success"
