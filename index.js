@@ -251,7 +251,7 @@ function waTextPrompt(prompt, id) {
   return {
     type: "interactive",
     interactive: {
-      type: "button",
+      type: "text",
       body: { text: prompt },
       action: {
         buttons: [{ type: "reply", reply: { id, title: "Reply" } }],
