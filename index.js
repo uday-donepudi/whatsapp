@@ -286,10 +286,6 @@ function waError(msg) {
       action: {
         buttons: [
           { type: "reply", reply: { id: "try_again", title: "Try again" } },
-          {
-            type: "reply",
-            reply: { id: "contact_support", title: "Contact support" },
-          },
         ],
       },
     },
@@ -785,7 +781,7 @@ app.post("/webhook", async (req, res) => {
         );
       }
 
-      // Format from_time and to_time as dd-MMM-yyyy HH:mm:ss
+      // Format from_time and to_time as dd-Mmm-yyyy HH:mm:ss
       const dateLabel = session.selectedDate.label; // e.g. 07-Nov-2025
       const slotTime = session.selectedSlot.label; // e.g. 10:30 AM or 10:30
       // Convert slotTime to 24-hour HH:mm:ss
@@ -833,10 +829,11 @@ app.post("/webhook", async (req, res) => {
       );
 
       // --- Make Zoho appointment API call ---
+      const zohoToken = await getZohoAccessToken();
       const zohoResp = await fetch(`${ZOHO_BASE}/appointment`, {
         method: "POST",
         headers: {
-          Authorization: `Zoho-oauthtoken ${ZOHO_TOKEN}`,
+          Authorization: `Zoho-oauthtoken ${zohoToken}`,
         },
         body: formData,
       });
