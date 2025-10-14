@@ -469,8 +469,22 @@ app.post("/webhook", async (req, res) => {
     if (session.lastMsgId === msgId) return res.sendStatus(200);
     session.lastMsgId = msgId;
 
-    // Step 1: Any inbound message → Language selection if not set
-    if (session.step === "INIT" || !session.language) {
+    // Step 1: Prompt for language if not set
+    if (!session.language) {
+      // If user is replying to language selection
+      if (
+        session.step === "AWAIT_LANGUAGE" &&
+        msg.type === "interactive" &&
+        msg.interactive.list_reply
+      ) {
+        const langId = msg.interactive.list_reply.id.replace("lang_", "");
+        session.language = langId;
+        session.step = "AWAIT_MAIN";
+        await sendWhatsApp(from, waMainMenu(session));
+        return res.sendStatus(200);
+      }
+
+      // Otherwise, prompt for language selection
       await sendWhatsApp(from, {
         type: "interactive",
         interactive: {
@@ -495,21 +509,8 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Step 1a: Handle language selection
-    if (
-      session.step === "AWAIT_LANGUAGE" &&
-      msg.type === "interactive" &&
-      msg.interactive.list_reply
-    ) {
-      const langId = msg.interactive.list_reply.id.replace("lang_", "");
-      session.language = langId;
-      session.step = "AWAIT_MAIN";
-      await sendWhatsApp(from, waMainMenu(session));
-      return res.sendStatus(200);
-    }
-
-    // Step 1: Any inbound message → Main menu
-    if (session.step === "INIT") {
+    // Step 2: Show main menu if language is set and step is INIT or AWAIT_MAIN
+    if (session.step === "INIT" || session.step === "AWAIT_MAIN") {
       await sendWhatsApp(from, waMainMenu(session));
       session.step = "AWAIT_MAIN";
       return res.sendStatus(200);
