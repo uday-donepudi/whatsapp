@@ -498,19 +498,23 @@ app.post("/webhook", async (req, res) => {
       const { year, month } = monthObj;
       const lastDay = new Date(year, month, 0).getDate();
       const availableDates = [];
-      for (let day = 1; day <= lastDay; ++day) {
+      const today = new Date();
+      const startDay =
+        year === today.getFullYear() && month === today.getMonth() + 1
+          ? today.getDate()
+          : 1;
+      for (let day = startDay; day <= lastDay; ++day) {
         const dateStr = `${String(day).padStart(2, "0")}-${monthObj.label
           .split(" ")[0]
           .substr(0, 3)}-${year}`;
         const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateStr}`;
         const { data } = await fetchZoho(slotUrl);
         const slots = data?.response?.returnvalue?.data;
-        // Only add if slots is an array and has at least one slot
         if (Array.isArray(slots) && slots.length > 0) {
           availableDates.push({
             id: `date_${dateStr}`,
             label: dateStr,
-            slots: slots.length, // This is now always accurate
+            slots: slots.length,
           });
         }
       }
