@@ -5,6 +5,7 @@ import fetch from "node-fetch";
 import dotenv from "dotenv";
 import { FormData } from "undici";
 import { v4 as uuidv4 } from "uuid";
+import fs from "fs";
 
 dotenv.config();
 
@@ -27,6 +28,13 @@ const SESSION_TTL = 15 * 60 * 1000; // 15 min
 
 // In-memory session store (swap for Redis in prod)
 const sessions = new Map();
+
+// Load translations
+const translations = {
+  en: JSON.parse(fs.readFileSync("en.json", "utf8")),
+  hi: JSON.parse(fs.readFileSync("hi.json", "utf8")),
+  te: JSON.parse(fs.readFileSync("tel.json", "utf8")),
+};
 
 // --- Utility Functions ---
 function log(...args) {
@@ -168,31 +176,47 @@ async function sendWhatsApp(to, payload) {
   return resp.status < 300;
 }
 
-// --- WhatsApp Interactive Message Builders ---
-function waBookButton() {
+// Translation helper
+function t(session, key, params = {}) {
+  const lang = session.language || "en";
+  let text = translations[lang][key] || translations["en"][key] || key;
+  Object.entries(params).forEach(([k, v]) => {
+    text = text.replace(`{${k}}`, v);
+  });
+  return text;
+}
+
+// Book button
+function waBookButton(session) {
   return {
     type: "interactive",
     interactive: {
       type: "button",
-      body: { text: "Hi! Ready to book an appointment?" },
+      body: { text: t(session, "mainMenu") },
       action: {
-        buttons: [{ type: "reply", reply: { id: "book_btn", title: "Book" } }],
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "book_btn", title: t(session, "book") },
+          },
+        ],
       },
     },
   };
 }
 
-function waServiceList(services) {
+// Service list
+function waServiceList(session, services) {
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: "Select a service:" },
+      body: { text: t(session, "selectService") },
       action: {
-        button: "Choose Service",
+        button: t(session, "chooseService"),
         sections: [
           {
-            title: "Services",
+            title: t(session, "services"),
             rows: services.slice(0, 10).map((s) => ({
               id: s.id,
               title: s.name.length > 24 ? s.name.slice(0, 21) + "..." : s.name,
@@ -205,17 +229,42 @@ function waServiceList(services) {
   };
 }
 
-function waMonthList(months) {
+// Staff selection
+function waStaffList(session, staffs) {
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: "Choose a month:" },
+      body: { text: t(session, "selectStaff") },
       action: {
-        button: "Select Month",
+        button: t(session, "chooseStaff"),
         sections: [
           {
-            title: "Months",
+            title: t(session, "staff"),
+            rows: staffs.map((s) => ({
+              id: `staff_${s.id}`,
+              title: s.name,
+              description: s.email || s.phone || "",
+            })),
+          },
+        ],
+      },
+    },
+  };
+}
+
+// Month list
+function waMonthList(session, months) {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: t(session, "chooseMonth") },
+      action: {
+        button: t(session, "chooseMonth"),
+        sections: [
+          {
+            title: t(session, "months"),
             rows: months.slice(0, 10).map((m) => ({
               id: m.id,
               title:
@@ -228,22 +277,23 @@ function waMonthList(months) {
   };
 }
 
-function waDateList(dates, monthLabel) {
+// Date list
+function waDateList(session, dates, monthLabel) {
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: `Available dates in ${monthLabel}:` },
+      body: { text: t(session, "chooseDate", { month: monthLabel }) },
       action: {
-        button: "Select Date",
+        button: t(session, "chooseDate", { month: monthLabel }),
         sections: [
           {
-            title: "Dates",
+            title: t(session, "dates"),
             rows: dates.slice(0, 10).map((d) => ({
               id: d.id,
               title:
                 d.label.length > 24 ? d.label.slice(0, 21) + "..." : d.label,
-              description: `${d.slots} slots`,
+              description: `${d.slots} ${t(session, "slots")}`,
             })),
           },
         ],
@@ -252,17 +302,18 @@ function waDateList(dates, monthLabel) {
   };
 }
 
-function waSlotList(slots, dateLabel) {
+// Slot list
+function waSlotList(session, slots, dateLabel) {
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: `Available slots on ${dateLabel}:` },
+      body: { text: t(session, "chooseSlot", { date: dateLabel }) },
       action: {
-        button: "Select Slot",
+        button: t(session, "chooseSlot", { date: dateLabel }),
         sections: [
           {
-            title: "Slots",
+            title: t(session, "slots"),
             rows: slots.slice(0, 10).map((s) => ({
               id: s.id,
               title:
@@ -275,93 +326,111 @@ function waSlotList(slots, dateLabel) {
   };
 }
 
-function waTextPrompt(prompt, id) {
+// Text prompt
+function waTextPrompt(session, key, id) {
   return {
     type: "text",
     text: {
-      body: prompt,
+      body: t(session, key),
     },
   };
 }
 
-function waConfirmation(details) {
+// Confirmation
+function waConfirmation(session, details) {
   return {
     type: "text",
     text: {
       body:
-        `✅ Booking confirmed!\n` +
-        `Service: ${details.service}\n` +
-        `Date: ${details.date}\n` +
-        `Time: ${details.time}\n` +
-        `Ref: ${details.ref}\n` +
-        (details.url ? `View details: ${details.url}` : ""),
+        `${t(session, "bookingConfirmed")}\n` +
+        `${t(session, "service")}: ${details.service}\n` +
+        `${t(session, "date")}: ${details.date}\n` +
+        `${t(session, "time")}: ${details.time}\n` +
+        `${t(session, "ref")}: ${details.ref}\n` +
+        (details.url ? `${t(session, "viewDetails")}: ${details.url}` : ""),
     },
   };
 }
 
-function waError(msg) {
+// Error
+function waError(session, key) {
   return {
     type: "interactive",
     interactive: {
       type: "button",
-      body: { text: `❌ ${msg}` },
+      body: { text: `❌ ${t(session, key)}` },
       action: {
         buttons: [
-          { type: "reply", reply: { id: "try_again", title: "Try again" } },
+          {
+            type: "reply",
+            reply: { id: "try_again", title: t(session, "tryAgain") },
+          },
         ],
       },
     },
   };
 }
 
-function waMainMenu() {
+// Main menu
+function waMainMenu(session) {
   return {
     type: "interactive",
     interactive: {
       type: "button",
-      body: { text: "Welcome! How can I assist you today?" },
+      body: { text: t(session, "mainMenu") },
       action: {
         buttons: [
-          { type: "reply", reply: { id: "book_btn", title: "Book" } },
-          { type: "reply", reply: { id: "help_btn", title: "Help" } },
-          { type: "reply", reply: { id: "support_btn", title: "Support" } },
+          {
+            type: "reply",
+            reply: { id: "book_btn", title: t(session, "book") },
+          },
+          {
+            type: "reply",
+            reply: { id: "help_btn", title: t(session, "help") },
+          },
+          {
+            type: "reply",
+            reply: { id: "support_btn", title: t(session, "support") },
+          },
         ],
       },
     },
   };
 }
 
-function waHelpMenu() {
+// Help menu
+function waHelpMenu(session) {
   return {
     type: "interactive",
     interactive: {
       type: "button",
-      body: {
-        text:
-          "How to Book an Appointment\n\n" +
-          "1. Select 'Book an Appointment' from the main menu.\n" +
-          "2. Choose your desired dental service.\n" +
-          "3. Pick an available date and time.\n" +
-          "4. Confirm who the booking is for.\n" +
-          "5. Review and confirm your details.",
-      },
+      body: { text: t(session, "howToBook") },
       action: {
-        buttons: [{ type: "reply", reply: { id: "home_btn", title: "Home" } }],
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
+        ],
       },
     },
   };
 }
 
-function waSupportMenu() {
+// Support menu
+function waSupportMenu(session) {
   return {
     type: "interactive",
     interactive: {
       type: "button",
-      body: {
-        text: "For support, please contact our team or reply with your query here.",
-      },
+      body: { text: t(session, "supportText") },
       action: {
-        buttons: [{ type: "reply", reply: { id: "home_btn", title: "Home" } }],
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
+        ],
       },
     },
   };
@@ -431,7 +500,7 @@ app.post("/webhook", async (req, res) => {
           return res.sendStatus(200);
         }
         session.services = services;
-        await sendWhatsApp(from, waServiceList(services));
+        await sendWhatsApp(from, waServiceList(session, services));
         session.step = "AWAIT_SERVICE";
         return res.sendStatus(200);
       }
@@ -480,7 +549,7 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
       session.services = services;
-      await sendWhatsApp(from, waServiceList(services));
+      await sendWhatsApp(from, waServiceList(session, services));
       session.step = "AWAIT_SERVICE";
       return res.sendStatus(200);
     }
@@ -558,7 +627,7 @@ app.post("/webhook", async (req, res) => {
         });
       }
       session.months = months;
-      await sendWhatsApp(from, waMonthList(months));
+      await sendWhatsApp(from, waMonthList(session, months));
       session.step = "AWAIT_MONTH";
       return res.sendStatus(200);
     }
@@ -616,7 +685,7 @@ app.post("/webhook", async (req, res) => {
       // Show first 9 dates, add "Show more" as 10th row if needed
       const pageSize = 9;
       const pageDates = availableDates.slice(0, pageSize);
-      let waMsg = waDateList(pageDates, monthObj.label);
+      let waMsg = waDateList(session, pageDates, monthObj.label);
 
       if (availableDates.length > pageSize) {
         waMsg.interactive.action.sections[0].rows.push({
@@ -644,7 +713,7 @@ app.post("/webhook", async (req, res) => {
         session.datePage = (session.datePage || 0) + 1;
         const start = session.datePage * pageSize;
         const pageDates = session.availableDates.slice(start, start + pageSize);
-        let waMsg = waDateList(pageDates, session.selectedMonth.label);
+        let waMsg = waDateList(session, pageDates, session.selectedMonth.label);
 
         if (session.availableDates.length > start + pageSize) {
           waMsg.interactive.action.sections[0].rows.push({
@@ -689,7 +758,7 @@ app.post("/webhook", async (req, res) => {
       // Show first 9 slots, add "Show more" as 10th row if needed
       const slotPageSize = 9;
       const pageSlots = session.slots.slice(0, slotPageSize);
-      let waMsg = waSlotList(pageSlots, dateObj.label);
+      let waMsg = waSlotList(session, pageSlots, dateObj.label);
 
       if (session.slots.length > slotPageSize) {
         waMsg.interactive.action.sections[0].rows.push({
@@ -716,7 +785,7 @@ app.post("/webhook", async (req, res) => {
         session.slotPage = (session.slotPage || 0) + 1;
         const start = session.slotPage * slotPageSize;
         const pageSlots = session.slots.slice(start, start + slotPageSize);
-        let waMsg = waSlotList(pageSlots, session.selectedDate.label);
+        let waMsg = waSlotList(session, pageSlots, session.selectedDate.label);
 
         if (session.slots.length > start + slotPageSize) {
           waMsg.interactive.action.sections[0].rows.push({
@@ -738,7 +807,7 @@ app.post("/webhook", async (req, res) => {
       // Prompt for name
       await sendWhatsApp(
         from,
-        waTextPrompt("Please enter your full name.", "name_prompt")
+        waTextPrompt(session, "enterFullName", "name_prompt")
       );
       session.step = "AWAIT_NAME";
       session.nameAttempts = 0;
@@ -757,7 +826,7 @@ app.post("/webhook", async (req, res) => {
         }
         await sendWhatsApp(
           from,
-          waTextPrompt("Name invalid. Please enter again.", "name_prompt")
+          waTextPrompt(session, "nameInvalid", "name_prompt")
         );
         return res.sendStatus(200);
       }
@@ -980,7 +1049,7 @@ app.post("/webhook", async (req, res) => {
         const appt = zohoData.response.returnvalue;
         await sendWhatsApp(
           from,
-          waConfirmation({
+          waConfirmation(session, {
             service: appt.service_name || session.selectedService.name,
             date: appt.start_time || session.selectedDate.label,
             time: appt.duration || session.selectedSlot.label,
@@ -994,7 +1063,7 @@ app.post("/webhook", async (req, res) => {
           zohoData?.response?.returnvalue?.message ||
           zohoData?.response?.message ||
           "Booking failed. Please try again.";
-        await sendWhatsApp(from, waError(zohoMsg));
+        await sendWhatsApp(from, waError(session, zohoMsg));
         clearSession(from);
       }
       return res.sendStatus(200);
