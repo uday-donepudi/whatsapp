@@ -33,7 +33,7 @@ const sessions = new Map();
 const translations = {
   en: JSON.parse(fs.readFileSync("./en.json", "utf-8")),
   hi: JSON.parse(fs.readFileSync("./hi.json", "utf-8")),
-  te: JSON.parse(fs.readFileSync("./tel.json", "utf-8")), // Changed from te.json to tel.json
+  te: JSON.parse(fs.readFileSync("./te.json", "utf-8")), // Changed from te.json to tel.json
 };
 
 // --- Utility Functions ---
