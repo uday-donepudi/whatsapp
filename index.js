@@ -562,6 +562,23 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
+    // Handle repeated "Book" button presses while waiting for service name
+    if (
+      session.step === "AWAIT_SERVICE" &&
+      msg.type === "interactive" &&
+      msg.interactive.button_reply?.id === "book_btn"
+    ) {
+      // User pressed "Book" again, re-prompt for service name
+      await sendWhatsApp(from, waTextPrompt(session, "selectService"));
+      return res.sendStatus(200);
+    }
+
+    // Handle unexpected input during service selection
+    if (session.step === "AWAIT_SERVICE" && msg.type !== "text") {
+      await sendWhatsApp(from, waError(session, "invalidService"));
+      return res.sendStatus(200);
+    }
+
     // Next: handle name input
     if (
       session.step === "AWAIT_NAME" &&
