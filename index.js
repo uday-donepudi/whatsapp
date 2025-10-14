@@ -905,5 +905,6 @@ async function getZohoAccessToken() {
 
   const resp = await fetch(url, { method: "POST" });
   const data = await resp.json();
+  log("Zoho AccessToken Response", resp.status, JSON.stringify(data));
   return data.access_token;
 }
