@@ -5,6 +5,7 @@ import fetch from "node-fetch";
 import dotenv from "dotenv";
 import { FormData } from "undici";
 import { v4 as uuidv4 } from "uuid";
+import fs from "fs";
 
 dotenv.config();
 
@@ -28,6 +29,13 @@ const SESSION_TTL = 15 * 60 * 1000; // 15 min
 // In-memory session store (swap for Redis in prod)
 const sessions = new Map();
 
+// Load translations
+const translations = {
+  en: JSON.parse(fs.readFileSync("./en.json", "utf-8")),
+  hi: JSON.parse(fs.readFileSync("./hi.json", "utf-8")),
+  te: JSON.parse(fs.readFileSync("./te.json", "utf-8")),
+};
+
 // --- Utility Functions ---
 function log(...args) {
   // Redact tokens
@@ -40,6 +48,16 @@ function log(...args) {
       : a
   );
   console.log(...safeArgs);
+}
+
+function t(session, key, vars = {}) {
+  const lang = session.language || "en";
+  let text = translations[lang]?.[key] || translations["en"]?.[key] || key;
+  // Replace placeholders like {name}
+  Object.keys(vars).forEach((k) => {
+    text = text.replace(new RegExp(`{${k}}`, "g"), vars[k]);
+  });
+  return text;
 }
 
 function getSession(user) {
@@ -169,30 +187,73 @@ async function sendWhatsApp(to, payload) {
 }
 
 // --- WhatsApp Interactive Message Builders ---
-function waBookButton() {
+function waLanguageSelection() {
   return {
     type: "interactive",
     interactive: {
-      type: "button",
-      body: { text: "Hi! Ready to book an appointment?" },
+      type: "list",
+      body: {
+        text: "Please select your preferred language / कृपया अपनी पसंदीदा भाषा चुनें / దయచేసి మీ ఇష్టమైన భాషను ఎంచుకోండి",
+      },
       action: {
-        buttons: [{ type: "reply", reply: { id: "book_btn", title: "Book" } }],
+        button: "Choose Language",
+        sections: [
+          {
+            title: "Languages",
+            rows: [
+              { id: "lang_en", title: "English", description: "English" },
+              { id: "lang_hi", title: "हिंदी", description: "Hindi" },
+              { id: "lang_te", title: "తెలుగు", description: "Telugu" },
+            ],
+          },
+        ],
       },
     },
   };
 }
 
-function waServiceList(services) {
+function waMainMenu(session) {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: t(session, "mainMenuWelcome") },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "book_btn", title: t(session, "book") },
+          },
+          {
+            type: "reply",
+            reply: { id: "help_btn", title: t(session, "help") },
+          },
+          {
+            type: "reply",
+            reply: { id: "support_btn", title: t(session, "support") },
+          },
+        ],
+      },
+    },
+  };
+}
+
+function waServiceList(session, services) {
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: "Select a service:" },
+      body: {
+        text:
+          t(session, "selectService") +
+          "\n\n👇 " +
+          t(session, "tapButtonBelow"),
+      },
       action: {
-        button: "Choose Service",
+        button: t(session, "chooseService"),
         sections: [
           {
-            title: "Services",
+            title: t(session, "services"),
             rows: services.slice(0, 10).map((s) => ({
               id: s.id,
               title: s.name.length > 24 ? s.name.slice(0, 21) + "..." : s.name,
@@ -205,17 +266,40 @@ function waServiceList(services) {
   };
 }
 
-function waMonthList(months) {
+function waStaffList(session, staffs) {
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: "Choose a month:" },
+      body: { text: t(session, "selectStaff") },
       action: {
-        button: "Select Month",
+        button: t(session, "chooseStaff"),
         sections: [
           {
-            title: "Months",
+            title: t(session, "staff"),
+            rows: staffs.map((s) => ({
+              id: `staff_${s.id}`,
+              title: s.name,
+              description: s.email || s.phone || "",
+            })),
+          },
+        ],
+      },
+    },
+  };
+}
+
+function waMonthList(session, months) {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: t(session, "chooseMonth") },
+      action: {
+        button: t(session, "selectMonth"),
+        sections: [
+          {
+            title: t(session, "months"),
             rows: months.slice(0, 10).map((m) => ({
               id: m.id,
               title:
@@ -228,22 +312,22 @@ function waMonthList(months) {
   };
 }
 
-function waDateList(dates, monthLabel) {
+function waDateList(session, dates, monthLabel) {
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: `Available dates in ${monthLabel}:` },
+      body: { text: t(session, "availableDatesIn", { month: monthLabel }) },
       action: {
-        button: "Select Date",
+        button: t(session, "selectDate"),
         sections: [
           {
-            title: "Dates",
+            title: t(session, "dates"),
             rows: dates.slice(0, 10).map((d) => ({
               id: d.id,
               title:
                 d.label.length > 24 ? d.label.slice(0, 21) + "..." : d.label,
-              description: `${d.slots} slots`,
+              description: t(session, "slotsAvailable", { count: d.slots }),
             })),
           },
         ],
@@ -252,17 +336,17 @@ function waDateList(dates, monthLabel) {
   };
 }
 
-function waSlotList(slots, dateLabel) {
+function waSlotList(session, slots, dateLabel) {
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: `Available slots on ${dateLabel}:` },
+      body: { text: t(session, "availableSlotsOn", { date: dateLabel }) },
       action: {
-        button: "Select Slot",
+        button: t(session, "selectSlot"),
         sections: [
           {
-            title: "Slots",
+            title: t(session, "slots"),
             rows: slots.slice(0, 10).map((s) => ({
               id: s.id,
               title:
@@ -275,93 +359,83 @@ function waSlotList(slots, dateLabel) {
   };
 }
 
-function waTextPrompt(prompt, id) {
+function waTextPrompt(session, key) {
   return {
     type: "text",
     text: {
-      body: prompt,
+      body: t(session, key),
     },
   };
 }
 
-function waConfirmation(details) {
+function waConfirmation(session, details) {
   return {
     type: "text",
     text: {
       body:
-        `✅ Booking confirmed!\n` +
-        `Service: ${details.service}\n` +
-        `Date: ${details.date}\n` +
-        `Time: ${details.time}\n` +
-        `Ref: ${details.ref}\n` +
-        (details.url ? `View details: ${details.url}` : ""),
+        `✅ ${t(session, "bookingConfirmed")}\n` +
+        `${t(session, "service")}: ${details.service}\n` +
+        `${t(session, "date")}: ${details.date}\n` +
+        `${t(session, "time")}: ${details.time}\n` +
+        `${t(session, "reference")}: ${details.ref}\n` +
+        (details.url ? `${t(session, "viewDetails")}: ${details.url}` : ""),
     },
   };
 }
 
-function waError(msg) {
+function waError(session, msgKey) {
   return {
     type: "interactive",
     interactive: {
       type: "button",
-      body: { text: `❌ ${msg}` },
+      body: { text: `❌ ${t(session, msgKey)}` },
       action: {
         buttons: [
-          { type: "reply", reply: { id: "try_again", title: "Try again" } },
+          {
+            type: "reply",
+            reply: { id: "try_again", title: t(session, "tryAgain") },
+          },
         ],
       },
     },
   };
 }
 
-function waMainMenu() {
+function waHelpMenu(session) {
   return {
     type: "interactive",
     interactive: {
       type: "button",
-      body: { text: "Welcome! How can I assist you today?" },
+      body: {
+        text: t(session, "helpText"),
+      },
       action: {
         buttons: [
-          { type: "reply", reply: { id: "book_btn", title: "Book" } },
-          { type: "reply", reply: { id: "help_btn", title: "Help" } },
-          { type: "reply", reply: { id: "support_btn", title: "Support" } },
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
         ],
       },
     },
   };
 }
 
-function waHelpMenu() {
+function waSupportMenu(session) {
   return {
     type: "interactive",
     interactive: {
       type: "button",
       body: {
-        text:
-          "How to Book an Appointment\n\n" +
-          "1. Select 'Book an Appointment' from the main menu.\n" +
-          "2. Choose your desired dental service.\n" +
-          "3. Pick an available date and time.\n" +
-          "4. Confirm who the booking is for.\n" +
-          "5. Review and confirm your details.",
+        text: t(session, "supportText"),
       },
       action: {
-        buttons: [{ type: "reply", reply: { id: "home_btn", title: "Home" } }],
-      },
-    },
-  };
-}
-
-function waSupportMenu() {
-  return {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: {
-        text: "For support, please contact our team or reply with your query here.",
-      },
-      action: {
-        buttons: [{ type: "reply", reply: { id: "home_btn", title: "Home" } }],
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
+        ],
       },
     },
   };
@@ -400,92 +474,107 @@ app.post("/webhook", async (req, res) => {
     if (session.lastMsgId === msgId) return res.sendStatus(200);
     session.lastMsgId = msgId;
 
-    // Step 1: Any inbound message → Main menu
+    // ===========================
+    // 1. LANGUAGE SELECTION
+    // ===========================
+    if (!session.language) {
+      if (
+        session.step === "AWAIT_LANGUAGE" &&
+        msg.type === "interactive" &&
+        msg.interactive.list_reply
+      ) {
+        const langId = msg.interactive.list_reply.id.replace("lang_", "");
+        session.language = langId;
+        session.step = "AWAIT_MAIN";
+        await sendWhatsApp(from, waMainMenu(session));
+        return res.sendStatus(200);
+      }
+
+      // Prompt for language
+      await sendWhatsApp(from, waLanguageSelection());
+      session.step = "AWAIT_LANGUAGE";
+      return res.sendStatus(200);
+    }
+
+    // ===========================
+    // 2. MAIN MENU
+    // ===========================
     if (session.step === "INIT") {
-      await sendWhatsApp(from, waMainMenu());
+      await sendWhatsApp(from, waMainMenu(session));
       session.step = "AWAIT_MAIN";
       return res.sendStatus(200);
     }
 
-    // Step 1b: Main menu button pressed
+    // ===========================
+    // 3. HANDLE MAIN MENU BUTTONS
+    // ===========================
     if (
       session.step === "AWAIT_MAIN" &&
       msg.type === "interactive" &&
       msg.interactive.button_reply
     ) {
       const btnId = msg.interactive.button_reply.id;
+
       if (btnId === "book_btn") {
-        // Start booking flow: fetch services immediately
-        const { data } = await fetchZoho(
-          `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`,
-          {},
-          3,
-          session
-        );
-        const services = data?.response?.returnvalue?.data || [];
-        if (!services.length) {
-          await sendWhatsApp(
-            from,
-            waError("No services found. Please try again later.")
-          );
+        // Fetch services from Zoho
+        const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
+        const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
+
+        if (status === 200 && data?.response?.returnvalue?.data?.length) {
+          const services = data.response.returnvalue.data;
+          session.services = services;
+          session.step = "AWAIT_SERVICE";
+          const serviceList = waServiceList(session, services);
+          log("DEBUG Service List", JSON.stringify(serviceList));
+          await sendWhatsApp(from, serviceList);
+          return res.sendStatus(200);
+        } else {
+          await sendWhatsApp(from, waError(session, "noServices"));
           return res.sendStatus(200);
         }
-        session.services = services;
-        await sendWhatsApp(from, waServiceList(services));
-        session.step = "AWAIT_SERVICE";
-        return res.sendStatus(200);
       }
+
       if (btnId === "help_btn") {
         session.step = "AWAIT_HELP";
-        await sendWhatsApp(from, waHelpMenu());
+        await sendWhatsApp(from, waHelpMenu(session));
         return res.sendStatus(200);
       }
+
       if (btnId === "support_btn") {
         session.step = "AWAIT_SUPPORT";
-        await sendWhatsApp(from, waSupportMenu());
+        await sendWhatsApp(from, waSupportMenu(session));
         return res.sendStatus(200);
       }
     }
 
-    // Step 1c: Home button pressed (from Help/Support)
+    // ===========================
+    // 4. HELP/SUPPORT: HOME BUTTON
+    // ===========================
     if (
       (session.step === "AWAIT_HELP" || session.step === "AWAIT_SUPPORT") &&
       msg.type === "interactive" &&
       msg.interactive.button_reply?.id === "home_btn"
     ) {
       session.step = "AWAIT_MAIN";
-      await sendWhatsApp(from, waMainMenu());
+      await sendWhatsApp(from, waMainMenu(session));
       return res.sendStatus(200);
     }
 
-    // Step 2: Book button pressed
+    // ===========================
+    // 5. TRY AGAIN BUTTON
+    // ===========================
     if (
-      session.step === "AWAIT_BOOK" &&
       msg.type === "interactive" &&
-      msg.interactive.button_reply?.id === "book_btn"
+      msg.interactive.button_reply?.id === "try_again"
     ) {
-      // Fetch services from Zoho
-      const { data } = await fetchZoho(
-        `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`,
-        {},
-        3,
-        session
-      );
-      const services = data?.response?.returnvalue?.data || [];
-      if (!services.length) {
-        await sendWhatsApp(
-          from,
-          waError("No services found. Please try again later.")
-        );
-        return res.sendStatus(200);
-      }
-      session.services = services;
-      await sendWhatsApp(from, waServiceList(services));
-      session.step = "AWAIT_SERVICE";
+      session.step = "AWAIT_MAIN";
+      await sendWhatsApp(from, waMainMenu(session));
       return res.sendStatus(200);
     }
 
-    // Step 3: Service selected
+    // ===========================
+    // 6. SERVICE SELECTION
+    // ===========================
     if (
       session.step === "AWAIT_SERVICE" &&
       msg.type === "interactive" &&
@@ -494,8 +583,8 @@ app.post("/webhook", async (req, res) => {
       const serviceId = msg.interactive.list_reply.id;
       const service = (session.services || []).find((s) => s.id === serviceId);
       if (!service) {
-        await sendWhatsApp(from, waError("Invalid service. Please try again."));
-        session.step = "AWAIT_BOOK";
+        await sendWhatsApp(from, waError(session, "invalidService"));
+        session.step = "AWAIT_MAIN";
         return res.sendStatus(200);
       }
       session.selectedService = service;
@@ -507,38 +596,17 @@ app.post("/webhook", async (req, res) => {
           stype === "ONE TO ONE") &&
         Array.isArray(service.assigned_staffs) &&
         service.assigned_staffs.length > 0 &&
-        service.let_customer_select_staff // <-- check this flag
+        service.let_customer_select_staff
       ) {
-        // Fetch staff details from Zoho
         const staffUrl = `${ZOHO_BASE}/staffs?workspace_id=${WORKSPACE_ID}`;
         const { data } = await fetchZoho(staffUrl, {}, 3, session);
         const allStaffs = data?.response?.returnvalue?.data || [];
-        // Filter only assigned staff for this service
         const assignedStaffs = allStaffs.filter((s) =>
           service.assigned_staffs.includes(s.id)
         );
         session.staffs = assignedStaffs;
         session.step = "AWAIT_STAFF";
-        await sendWhatsApp(from, {
-          type: "interactive",
-          interactive: {
-            type: "list",
-            body: { text: "Select a staff member:" },
-            action: {
-              button: "Choose Staff",
-              sections: [
-                {
-                  title: "Staff",
-                  rows: assignedStaffs.map((s) => ({
-                    id: `staff_${s.id}`,
-                    title: s.name,
-                    description: s.email || s.phone || "",
-                  })),
-                },
-              ],
-            },
-          },
-        });
+        await sendWhatsApp(from, waStaffList(session, assignedStaffs));
         return res.sendStatus(200);
       }
 
@@ -558,12 +626,46 @@ app.post("/webhook", async (req, res) => {
         });
       }
       session.months = months;
-      await sendWhatsApp(from, waMonthList(months));
+      await sendWhatsApp(from, waMonthList(session, months));
       session.step = "AWAIT_MONTH";
       return res.sendStatus(200);
     }
 
-    // Step 4: Month selected
+    // ===========================
+    // 7. STAFF SELECTION
+    // ===========================
+    if (
+      session.step === "AWAIT_STAFF" &&
+      msg.type === "interactive" &&
+      msg.interactive.list_reply
+    ) {
+      const staffId = msg.interactive.list_reply.id.replace("staff_", "");
+      session.selectedStaff = staffId;
+
+      // Offer months
+      const now = new Date();
+      const months = [];
+      for (let i = 0; i < 3; ++i) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        months.push({
+          id: `month_${d.getFullYear()}_${String(d.getMonth() + 1).padStart(
+            2,
+            "0"
+          )}`,
+          label: d.toLocaleString("en-US", { month: "long", year: "numeric" }),
+          year: d.getFullYear(),
+          month: d.getMonth() + 1,
+        });
+      }
+      session.months = months;
+      await sendWhatsApp(from, waMonthList(session, months));
+      session.step = "AWAIT_MONTH";
+      return res.sendStatus(200);
+    }
+
+    // ===========================
+    // 8. MONTH SELECTION
+    // ===========================
     if (
       session.step === "AWAIT_MONTH" &&
       msg.type === "interactive" &&
@@ -572,12 +674,11 @@ app.post("/webhook", async (req, res) => {
       const monthId = msg.interactive.list_reply.id;
       const monthObj = (session.months || []).find((m) => m.id === monthId);
       if (!monthObj) {
-        await sendWhatsApp(from, waError("Invalid month. Please try again."));
+        await sendWhatsApp(from, waError(session, "invalidMonth"));
         session.step = "AWAIT_SERVICE";
         return res.sendStatus(200);
       }
       session.selectedMonth = monthObj;
-      // Loop dates in month, find available slots
       const { year, month } = monthObj;
       const lastDay = new Date(year, month, 0).getDate();
       const availableDates = [];
@@ -602,26 +703,22 @@ app.post("/webhook", async (req, res) => {
         }
       }
       session.availableDates = availableDates;
-      session.datePage = 0; // pagination index
+      session.datePage = 0;
 
       if (!availableDates.length) {
-        await sendWhatsApp(
-          from,
-          waError(`No slots in ${monthObj.label}. Choose another month.`)
-        );
+        await sendWhatsApp(from, waError(session, "noSlotsInMonth"));
         session.step = "AWAIT_MONTH";
         return res.sendStatus(200);
       }
 
-      // Show first 9 dates, add "Show more" as 10th row if needed
       const pageSize = 9;
       const pageDates = availableDates.slice(0, pageSize);
-      let waMsg = waDateList(pageDates, monthObj.label);
+      let waMsg = waDateList(session, pageDates, monthObj.label);
 
       if (availableDates.length > pageSize) {
         waMsg.interactive.action.sections[0].rows.push({
           id: "show_more_dates",
-          title: "Show more dates...",
+          title: t(session, "showMore"),
         });
       }
 
@@ -630,7 +727,9 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Step 5: Date selected or Show more
+    // ===========================
+    // 9. DATE SELECTION
+    // ===========================
     if (
       session.step === "AWAIT_DATE" &&
       msg.type === "interactive" &&
@@ -638,18 +737,17 @@ app.post("/webhook", async (req, res) => {
     ) {
       const dateId = msg.interactive.list_reply.id;
 
-      // Handle "Show more dates"
       if (dateId === "show_more_dates") {
         const pageSize = 9;
         session.datePage = (session.datePage || 0) + 1;
         const start = session.datePage * pageSize;
         const pageDates = session.availableDates.slice(start, start + pageSize);
-        let waMsg = waDateList(pageDates, session.selectedMonth.label);
+        let waMsg = waDateList(session, pageDates, session.selectedMonth.label);
 
         if (session.availableDates.length > start + pageSize) {
           waMsg.interactive.action.sections[0].rows.push({
             id: "show_more_dates",
-            title: "Show more dates...",
+            title: t(session, "showMore"),
           });
         }
         await sendWhatsApp(from, waMsg);
@@ -660,22 +758,18 @@ app.post("/webhook", async (req, res) => {
         (d) => d.id === dateId
       );
       if (!dateObj) {
-        await sendWhatsApp(from, waError("Invalid date. Please try again."));
+        await sendWhatsApp(from, waError(session, "invalidDate"));
         session.step = "AWAIT_MONTH";
         return res.sendStatus(200);
       }
       session.selectedDate = dateObj;
-      // Fetch slots for this date
       const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateObj.label}`;
       const { data } = await fetchZoho(slotUrl, {}, 3, session);
       const slots = Array.isArray(data?.response?.returnvalue?.data)
         ? data.response.returnvalue.data
         : [];
       if (!slots.length) {
-        await sendWhatsApp(
-          from,
-          waError("No slots available. Choose another date.")
-        );
+        await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
         session.step = "AWAIT_DATE";
         return res.sendStatus(200);
       }
@@ -684,17 +778,16 @@ app.post("/webhook", async (req, res) => {
         label: s,
         time: s,
       }));
-      session.slotPage = 0; // pagination index for slots
+      session.slotPage = 0;
 
-      // Show first 9 slots, add "Show more" as 10th row if needed
       const slotPageSize = 9;
       const pageSlots = session.slots.slice(0, slotPageSize);
-      let waMsg = waSlotList(pageSlots, dateObj.label);
+      let waMsg = waSlotList(session, pageSlots, dateObj.label);
 
       if (session.slots.length > slotPageSize) {
         waMsg.interactive.action.sections[0].rows.push({
           id: "show_more_slots",
-          title: "Show more slots...",
+          title: t(session, "showMore"),
         });
       }
       await sendWhatsApp(from, waMsg);
@@ -702,7 +795,9 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Step 6: Slot selected or Show more
+    // ===========================
+    // 10. SLOT SELECTION
+    // ===========================
     if (
       session.step === "AWAIT_SLOT" &&
       msg.type === "interactive" &&
@@ -710,18 +805,17 @@ app.post("/webhook", async (req, res) => {
     ) {
       const slotId = msg.interactive.list_reply.id;
 
-      // Handle "Show more slots"
       if (slotId === "show_more_slots") {
         const slotPageSize = 9;
         session.slotPage = (session.slotPage || 0) + 1;
         const start = session.slotPage * slotPageSize;
         const pageSlots = session.slots.slice(start, start + slotPageSize);
-        let waMsg = waSlotList(pageSlots, session.selectedDate.label);
+        let waMsg = waSlotList(session, pageSlots, session.selectedDate.label);
 
         if (session.slots.length > start + slotPageSize) {
           waMsg.interactive.action.sections[0].rows.push({
             id: "show_more_slots",
-            title: "Show more slots...",
+            title: t(session, "showMore"),
           });
         }
         await sendWhatsApp(from, waMsg);
@@ -730,105 +824,74 @@ app.post("/webhook", async (req, res) => {
 
       const slotObj = (session.slots || []).find((s) => s.id === slotId);
       if (!slotObj) {
-        await sendWhatsApp(from, waError("Invalid slot. Please try again."));
+        await sendWhatsApp(from, waError(session, "invalidSlot"));
         session.step = "AWAIT_DATE";
         return res.sendStatus(200);
       }
       session.selectedSlot = slotObj;
-      // Prompt for name
-      await sendWhatsApp(
-        from,
-        waTextPrompt("Please enter your full name.", "name_prompt")
-      );
+      await sendWhatsApp(from, waTextPrompt(session, "enterName"));
       session.step = "AWAIT_NAME";
       session.nameAttempts = 0;
       return res.sendStatus(200);
     }
 
-    // Step 7: Name input
+    // ===========================
+    // 11. NAME INPUT
+    // ===========================
     if (session.step === "AWAIT_NAME" && msg.type === "text") {
       const name = msg.text.body.trim();
       if (!name || name.length > 100) {
         session.nameAttempts = (session.nameAttempts || 0) + 1;
         if (session.nameAttempts >= 3) {
-          await sendWhatsApp(from, waError("Invalid name. Booking cancelled."));
+          await sendWhatsApp(from, waError(session, "bookingCancelled"));
           clearSession(from);
           return res.sendStatus(200);
         }
-        await sendWhatsApp(
-          from,
-          waTextPrompt("Name invalid. Please enter again.", "name_prompt")
-        );
+        await sendWhatsApp(from, waTextPrompt(session, "invalidName"));
         return res.sendStatus(200);
       }
       session.customerName = name;
-      await sendWhatsApp(
-        from,
-        waTextPrompt(
-          "Enter your email address (e.g., user@example.com):",
-          "email_prompt"
-        )
-      );
+      await sendWhatsApp(from, waTextPrompt(session, "enterEmail"));
       session.step = "AWAIT_EMAIL";
       session.emailAttempts = 0;
       return res.sendStatus(200);
     }
 
-    // Step 8: Email input
+    // ===========================
+    // 12. EMAIL INPUT
+    // ===========================
     if (session.step === "AWAIT_EMAIL" && msg.type === "text") {
       const email = msg.text.body.trim();
       if (!validateEmail(email)) {
         session.emailAttempts = (session.emailAttempts || 0) + 1;
         if (session.emailAttempts >= 3) {
-          await sendWhatsApp(
-            from,
-            waError("Invalid email. Booking cancelled.")
-          );
+          await sendWhatsApp(from, waError(session, "bookingCancelled"));
           clearSession(from);
           return res.sendStatus(200);
         }
-        await sendWhatsApp(
-          from,
-          waTextPrompt(
-            "Email invalid. Please enter again (e.g., user@example.com):",
-            "email_prompt"
-          )
-        );
+        await sendWhatsApp(from, waTextPrompt(session, "invalidEmail"));
         return res.sendStatus(200);
       }
       session.customerEmail = email;
-      await sendWhatsApp(
-        from,
-        waTextPrompt(
-          "Enter your phone number (e.g., 9xxxxxxxxx or +91xxxxxxxxxx):",
-          "phone_prompt"
-        )
-      );
+      await sendWhatsApp(from, waTextPrompt(session, "enterPhone"));
       session.step = "AWAIT_PHONE";
       session.phoneAttempts = 0;
       return res.sendStatus(200);
     }
 
-    // Step 9: Phone input
+    // ===========================
+    // 13. PHONE INPUT & BOOKING
+    // ===========================
     if (session.step === "AWAIT_PHONE" && msg.type === "text") {
       const phone = msg.text.body.trim();
       if (!validatePhone(phone)) {
         session.phoneAttempts = (session.phoneAttempts || 0) + 1;
         if (session.phoneAttempts >= 3) {
-          await sendWhatsApp(
-            from,
-            waError("Invalid phone. Booking cancelled.")
-          );
+          await sendWhatsApp(from, waError(session, "bookingCancelled"));
           clearSession(from);
           return res.sendStatus(200);
         }
-        await sendWhatsApp(
-          from,
-          waTextPrompt(
-            "Phone invalid. Please enter again (e.g., 9xxxxxxxxx or +91xxxxxxxxxx):",
-            "phone_prompt"
-          )
-        );
+        await sendWhatsApp(from, waTextPrompt(session, "invalidPhone"));
         return res.sendStatus(200);
       }
       session.customerPhone = phone;
@@ -837,7 +900,6 @@ app.post("/webhook", async (req, res) => {
       const formData = new FormData();
       formData.append("service_id", session.selectedService.id);
 
-      // Dynamically add staff_id, group_id, or resource_id
       const stype = (session.selectedService.service_type || "").toUpperCase();
       let bookingType = "";
 
@@ -861,7 +923,6 @@ app.post("/webhook", async (req, res) => {
         stype === "GROUP BOOKING" ||
         stype === "COLLECTIVE"
       ) {
-        // Only send group_id if it exists and is a string
         let groupId = session.selectedGroup;
         if (
           !groupId &&
@@ -888,10 +949,8 @@ app.post("/webhook", async (req, res) => {
         bookingType = "resource";
       }
 
-      // Format from_time and to_time as dd-Mmm-yyyy HH:mm:ss
-      const dateLabel = session.selectedDate.label; // e.g. 07-Nov-2025
-      const slotTime = session.selectedSlot.label; // e.g. 10:30 AM or 10:30
-      // Convert slotTime to 24-hour HH:mm:ss
+      const dateLabel = session.selectedDate.label;
+      const slotTime = session.selectedSlot.label;
       let [hour, minute] = slotTime.split(":");
       let ampm = "";
       if (minute && minute.includes(" ")) {
@@ -904,7 +963,6 @@ app.post("/webhook", async (req, res) => {
       minute = minute ? minute.padStart(2, "0") : "00";
       const fromTimeStr = `${dateLabel} ${hour}:${minute}:00`;
 
-      // Calculate to_time based on duration (in minutes)
       let duration = 30;
       if (session.selectedService.duration) {
         const match = session.selectedService.duration.match(/(\d+)/);
@@ -935,7 +993,6 @@ app.post("/webhook", async (req, res) => {
         })
       );
 
-      // --- Log all booking params before API call ---
       log("Zoho Booking Params", {
         service_id: session.selectedService.id,
         bookingType,
@@ -953,7 +1010,6 @@ app.post("/webhook", async (req, res) => {
         notes: "Booked via WhatsApp",
       });
 
-      // --- Make Zoho appointment API call ---
       const zohoToken = await getSessionZohoToken(session);
       const zohoResp = await fetch(`${ZOHO_BASE}/appointment`, {
         method: "POST",
@@ -972,7 +1028,6 @@ app.post("/webhook", async (req, res) => {
       }
       log("Zoho appointment", zohoResp.status, JSON.stringify(zohoData));
 
-      // --- Parse Zoho appointment response ---
       if (
         zohoData?.response?.status === "success" &&
         zohoData.response.returnvalue?.status === "upcoming"
@@ -980,7 +1035,7 @@ app.post("/webhook", async (req, res) => {
         const appt = zohoData.response.returnvalue;
         await sendWhatsApp(
           from,
-          waConfirmation({
+          waConfirmation(session, {
             service: appt.service_name || session.selectedService.name,
             date: appt.start_time || session.selectedDate.label,
             time: appt.duration || session.selectedSlot.label,
@@ -990,19 +1045,17 @@ app.post("/webhook", async (req, res) => {
         );
         clearSession(from);
       } else {
-        const zohoMsg =
-          zohoData?.response?.returnvalue?.message ||
-          zohoData?.response?.message ||
-          "Booking failed. Please try again.";
-        await sendWhatsApp(from, waError(zohoMsg));
+        await sendWhatsApp(from, waError(session, "bookingFailed"));
         clearSession(from);
       }
       return res.sendStatus(200);
     }
 
-    // Fallback: always offer Book button
-    await sendWhatsApp(from, waBookButton());
-    session.step = "AWAIT_BOOK";
+    // ===========================
+    // FALLBACK
+    // ===========================
+    session.step = "AWAIT_MAIN";
+    await sendWhatsApp(from, waMainMenu(session));
     return res.sendStatus(200);
   } catch (err) {
     log("Webhook error", err.stack);
