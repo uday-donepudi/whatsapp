@@ -556,16 +556,47 @@ app.post("/webhook", async (req, res) => {
       msg.type === "text" &&
       msg.text?.body
     ) {
-      // Here you would handle the service selection, e.g.:
-      // session.data.service = msg.text.body;
-      // session.step = "NEXT_BOOKING_STEP";
-      // await sendWhatsApp(from, waTextPrompt(session, "enterName"));
-      // return res.sendStatus(200);
+      session.data.service = msg.text.body;
+      session.step = "AWAIT_NAME";
+      await sendWhatsApp(from, waTextPrompt(session, "enterName"));
+      return res.sendStatus(200);
+    }
 
-      // For now, just echo back the selected service and go to main menu
+    // Next: handle name input
+    if (
+      session.step === "AWAIT_NAME" &&
+      msg.type === "text" &&
+      msg.text?.body
+    ) {
+      session.data.name = msg.text.body;
+      session.step = "AWAIT_EMAIL";
+      await sendWhatsApp(from, waTextPrompt(session, "enterEmail"));
+      return res.sendStatus(200);
+    }
+
+    // Next: handle email input
+    if (
+      session.step === "AWAIT_EMAIL" &&
+      msg.type === "text" &&
+      msg.text?.body
+    ) {
+      session.data.email = msg.text.body;
+      session.step = "AWAIT_PHONE";
+      await sendWhatsApp(from, waTextPrompt(session, "enterPhone"));
+      return res.sendStatus(200);
+    }
+
+    // Next: handle phone input
+    if (
+      session.step === "AWAIT_PHONE" &&
+      msg.type === "text" &&
+      msg.text?.body
+    ) {
+      session.data.phone = msg.text.body;
+      // Here you would confirm booking, etc.
       await sendWhatsApp(from, {
         type: "text",
-        text: { body: t(session, "service") + ": " + msg.text.body },
+        text: { body: t(session, "bookingConfirmed") },
       });
       session.step = "AWAIT_MAIN";
       await sendWhatsApp(from, waMainMenu(session));
