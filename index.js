@@ -500,39 +500,18 @@ app.post("/webhook", async (req, res) => {
       }
       session.selectedService = service;
 
-      // Check if group booking and multiple groups
       const stype = (service.service_type || "").toUpperCase();
       if (
-        (stype === "GROUP" ||
-          stype === "GROUP BOOKING" ||
-          stype === "COLLECTIVE") &&
-        Array.isArray(service.assigned_groups) &&
-        service.assigned_groups.length > 1
+        stype === "APPOINTMENT" ||
+        stype === "ONE-ON-ONE" ||
+        stype === "ONE TO ONE"
       ) {
-        // Prompt user to select a group
-        session.step = "AWAIT_GROUP";
-        session.groups = service.assigned_groups;
-        await sendWhatsApp(from, {
-          type: "interactive",
-          interactive: {
-            type: "list",
-            body: { text: "Select a staff group:" },
-            action: {
-              button: "Choose Group",
-              sections: [
-                {
-                  title: "Groups",
-                  rows: service.assigned_groups.map((g, idx) => ({
-                    id: `group_${g}`,
-                    title: `Group ${idx + 1}`,
-                    description: g,
-                  })),
-                },
-              ],
-            },
-          },
-        });
-        return res.sendStatus(200);
+        const staffId =
+          session.selectedStaff || session.selectedService.assigned_staffs?.[0];
+        if (staffId) {
+          formData.append("staff_id", staffId);
+          bookingType = "staff";
+        }
       }
 
       // Offer months (current + 2)
@@ -833,6 +812,7 @@ app.post("/webhook", async (req, res) => {
       // Dynamically add staff_id, group_id, or resource_id
       const stype = (session.selectedService.service_type || "").toUpperCase();
       let bookingType = "";
+
       if (
         (stype === "APPOINTMENT" ||
           stype === "ONE-ON-ONE" ||
@@ -840,21 +820,34 @@ app.post("/webhook", async (req, res) => {
         Array.isArray(session.selectedService.assigned_staffs) &&
         session.selectedService.assigned_staffs.length > 0
       ) {
-        formData.append("staff_id", session.selectedService.assigned_staffs[0]);
-        bookingType = "staff";
+        const staffId =
+          session.selectedStaff || session.selectedService.assigned_staffs?.[0];
+        if (staffId) {
+          formData.append("staff_id", staffId);
+          bookingType = "staff";
+        }
       }
+
       if (
         stype === "GROUP" ||
         stype === "GROUP BOOKING" ||
         stype === "COLLECTIVE"
       ) {
-        const groupId =
-          session.selectedGroup || session.selectedService.assigned_groups?.[0];
+        // Only send group_id if it exists and is a string
+        let groupId = session.selectedGroup;
+        if (
+          !groupId &&
+          Array.isArray(session.selectedService.assigned_groups)
+        ) {
+          const firstGroup = session.selectedService.assigned_groups[0];
+          groupId = typeof firstGroup === "object" ? firstGroup.id : firstGroup;
+        }
         if (groupId) {
           formData.append("group_id", groupId);
           bookingType = "group";
         }
       }
+
       if (
         stype === "RESOURCE" &&
         Array.isArray(session.selectedService.assigned_resources) &&
