@@ -249,13 +249,9 @@ function waSlotList(slots, dateLabel) {
 
 function waTextPrompt(prompt, id) {
   return {
-    type: "interactive",
-    interactive: {
-      type: "text",
-      body: { text: prompt },
-      action: {
-        buttons: [{ type: "reply", reply: { id, title: "Reply" } }],
-      },
+    type: "text",
+    text: {
+      body: prompt,
     },
   };
 }
@@ -299,6 +295,59 @@ function waError(msg) {
   };
 }
 
+function waMainMenu() {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: "Welcome! How can I assist you today?" },
+      action: {
+        buttons: [
+          { type: "reply", reply: { id: "book_btn", title: "Book" } },
+          { type: "reply", reply: { id: "help_btn", title: "Help" } },
+          { type: "reply", reply: { id: "support_btn", title: "Support" } },
+        ],
+      },
+    },
+  };
+}
+
+function waHelpMenu() {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text:
+          "How to Book an Appointment\n\n" +
+          "1. Select 'Book an Appointment' from the main menu.\n" +
+          "2. Choose your desired dental service.\n" +
+          "3. Pick an available date and time.\n" +
+          "4. Confirm who the booking is for.\n" +
+          "5. Review and confirm your details.",
+      },
+      action: {
+        buttons: [{ type: "reply", reply: { id: "home_btn", title: "Home" } }],
+      },
+    },
+  };
+}
+
+function waSupportMenu() {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text: "For support, please contact our team or reply with your query here.",
+      },
+      action: {
+        buttons: [{ type: "reply", reply: { id: "home_btn", title: "Home" } }],
+      },
+    },
+  };
+}
+
 // ---------------------
 // Webhook verification
 // ---------------------
@@ -332,10 +381,46 @@ app.post("/webhook", async (req, res) => {
     if (session.lastMsgId === msgId) return res.sendStatus(200);
     session.lastMsgId = msgId;
 
-    // Step 1: Any inbound message → Book button
+    // Step 1: Any inbound message → Main menu
     if (session.step === "INIT") {
-      await sendWhatsApp(from, waBookButton());
-      session.step = "AWAIT_BOOK";
+      await sendWhatsApp(from, waMainMenu());
+      session.step = "AWAIT_MAIN";
+      return res.sendStatus(200);
+    }
+
+    // Step 1b: Main menu button pressed
+    if (
+      session.step === "AWAIT_MAIN" &&
+      msg.type === "interactive" &&
+      msg.interactive.button_reply
+    ) {
+      const btnId = msg.interactive.button_reply.id;
+      if (btnId === "book_btn") {
+        // Start booking flow
+        session.step = "AWAIT_BOOK";
+        await sendWhatsApp(from, waBookButton());
+        return res.sendStatus(200);
+      }
+      if (btnId === "help_btn") {
+        session.step = "AWAIT_HELP";
+        await sendWhatsApp(from, waHelpMenu());
+        return res.sendStatus(200);
+      }
+      if (btnId === "support_btn") {
+        session.step = "AWAIT_SUPPORT";
+        await sendWhatsApp(from, waSupportMenu());
+        return res.sendStatus(200);
+      }
+    }
+
+    // Step 1c: Home button pressed (from Help/Support)
+    if (
+      (session.step === "AWAIT_HELP" || session.step === "AWAIT_SUPPORT") &&
+      msg.type === "interactive" &&
+      msg.interactive.button_reply?.id === "home_btn"
+    ) {
+      session.step = "AWAIT_MAIN";
+      await sendWhatsApp(from, waMainMenu());
       return res.sendStatus(200);
     }
 
