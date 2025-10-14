@@ -512,8 +512,37 @@ app.post("/webhook", async (req, res) => {
     // Step 2: Show main menu if language is set and step is INIT or AWAIT_MAIN
     if (session.step === "INIT" || session.step === "AWAIT_MAIN") {
       await sendWhatsApp(from, waMainMenu(session));
-      session.step = "AWAIT_MAIN";
+      await sendWhatsApp(from, waBookButton(session));
+      await sendWhatsApp(from, waHelpMenu(session));
+      await sendWhatsApp(from, waSupportMenu(session));
+      await sendWhatsApp(from, waTextPrompt(session, "selectService"));
+      session.step = "AWAIT_SERVICE";
       return res.sendStatus(200);
+    }
+
+    // Step 3: Handle main menu button presses
+    if (
+      session.step === "AWAIT_MAIN" &&
+      msg.type === "interactive" &&
+      msg.interactive.button_reply
+    ) {
+      const btnId = msg.interactive.button_reply.id;
+      if (btnId === "book_btn") {
+        // TODO: Start booking flow here
+        await sendWhatsApp(from, waTextPrompt(session, "selectService"));
+        session.step = "AWAIT_SERVICE";
+        return res.sendStatus(200);
+      }
+      if (btnId === "help_btn") {
+        session.step = "AWAIT_HELP";
+        await sendWhatsApp(from, waHelpMenu(session));
+        return res.sendStatus(200);
+      }
+      if (btnId === "support_btn") {
+        session.step = "AWAIT_SUPPORT";
+        await sendWhatsApp(from, waSupportMenu(session));
+        return res.sendStatus(200);
+      }
     }
 
     // Step 1c: Home button pressed (from Help/Support)
