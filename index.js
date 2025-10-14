@@ -469,7 +469,7 @@ app.post("/webhook", async (req, res) => {
     if (session.lastMsgId === msgId) return res.sendStatus(200);
     session.lastMsgId = msgId;
 
-    // Step 1: Prompt for language if not set
+    // 1. Language selection
     if (!session.language) {
       // If user is replying to language selection
       if (
@@ -483,7 +483,6 @@ app.post("/webhook", async (req, res) => {
         await sendWhatsApp(from, waMainMenu(session));
         return res.sendStatus(200);
       }
-
       // Otherwise, prompt for language selection
       await sendWhatsApp(from, {
         type: "interactive",
@@ -509,18 +508,14 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Step 2: Show main menu if language is set and step is INIT or AWAIT_MAIN
+    // 2. Main menu (only if step is INIT or AWAIT_MAIN)
     if (session.step === "INIT" || session.step === "AWAIT_MAIN") {
       await sendWhatsApp(from, waMainMenu(session));
-      await sendWhatsApp(from, waBookButton(session));
-      await sendWhatsApp(from, waHelpMenu(session));
-      await sendWhatsApp(from, waSupportMenu(session));
-      await sendWhatsApp(from, waTextPrompt(session, "selectService"));
-      session.step = "AWAIT_SERVICE";
+      session.step = "AWAIT_MAIN";
       return res.sendStatus(200);
     }
 
-    // Step 3: Handle main menu button presses
+    // 3. Handle main menu button presses
     if (
       session.step === "AWAIT_MAIN" &&
       msg.type === "interactive" &&
@@ -528,9 +523,8 @@ app.post("/webhook", async (req, res) => {
     ) {
       const btnId = msg.interactive.button_reply.id;
       if (btnId === "book_btn") {
-        // TODO: Start booking flow here
-        await sendWhatsApp(from, waTextPrompt(session, "selectService"));
         session.step = "AWAIT_SERVICE";
+        await sendWhatsApp(from, waTextPrompt(session, "selectService"));
         return res.sendStatus(200);
       }
       if (btnId === "help_btn") {
@@ -545,7 +539,7 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // Step 1c: Home button pressed (from Help/Support)
+    // 4. Help/Support: Home button returns to main menu
     if (
       (session.step === "AWAIT_HELP" || session.step === "AWAIT_SUPPORT") &&
       msg.type === "interactive" &&
@@ -556,9 +550,31 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Fallback: always offer Book button
-    await sendWhatsApp(from, waBookButton(session));
-    session.step = "AWAIT_BOOK";
+    // 5. Service selection (after Book)
+    if (
+      session.step === "AWAIT_SERVICE" &&
+      msg.type === "text" &&
+      msg.text?.body
+    ) {
+      // Here you would handle the service selection, e.g.:
+      // session.data.service = msg.text.body;
+      // session.step = "NEXT_BOOKING_STEP";
+      // await sendWhatsApp(from, waTextPrompt(session, "enterName"));
+      // return res.sendStatus(200);
+
+      // For now, just echo back the selected service and go to main menu
+      await sendWhatsApp(from, {
+        type: "text",
+        text: { body: t(session, "service") + ": " + msg.text.body },
+      });
+      session.step = "AWAIT_MAIN";
+      await sendWhatsApp(from, waMainMenu(session));
+      return res.sendStatus(200);
+    }
+
+    // Fallback: always return to main menu
+    session.step = "AWAIT_MAIN";
+    await sendWhatsApp(from, waMainMenu(session));
     return res.sendStatus(200);
   } catch (err) {
     log("Webhook error", err.stack);
