@@ -532,13 +532,14 @@ app.post("/webhook", async (req, res) => {
       const btnId = msg.interactive.button_reply.id;
 
       if (btnId === "book_btn") {
-        // Fetch services from Zoho
         const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
         const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
 
         if (status === 200 && data.data?.services?.length) {
           session.step = "AWAIT_SERVICE";
-          await sendWhatsApp(from, waServiceList(session, data.data.services));
+          const serviceList = waServiceList(session, data.data.services);
+          log("DEBUG Service List", JSON.stringify(serviceList)); // ADD THIS LINE
+          await sendWhatsApp(from, serviceList);
           return res.sendStatus(200);
         } else {
           await sendWhatsApp(from, waError(session, "noServices"));
