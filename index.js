@@ -3,7 +3,7 @@ import express from "express";
 import bodyParser from "body-parser";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
-import FormData from "form-data";
+import { FormData } from "undici";
 import { v4 as uuidv4 } from "uuid";
 
 dotenv.config();
@@ -415,9 +415,24 @@ app.post("/webhook", async (req, res) => {
     ) {
       const btnId = msg.interactive.button_reply.id;
       if (btnId === "book_btn") {
-        // Start booking flow
-        session.step = "AWAIT_BOOK";
-        await sendWhatsApp(from, waBookButton());
+        // Start booking flow: fetch services immediately
+        const { data } = await fetchZoho(
+          `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`,
+          {},
+          3,
+          session
+        );
+        const services = data?.response?.returnvalue?.data || [];
+        if (!services.length) {
+          await sendWhatsApp(
+            from,
+            waError("No services found. Please try again later.")
+          );
+          return res.sendStatus(200);
+        }
+        session.services = services;
+        await sendWhatsApp(from, waServiceList(services));
+        session.step = "AWAIT_SERVICE";
         return res.sendStatus(200);
       }
       if (btnId === "help_btn") {
