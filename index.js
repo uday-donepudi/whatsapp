@@ -499,6 +499,42 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
       session.selectedService = service;
+
+      // Check if group booking and multiple groups
+      const stype = (service.service_type || "").toUpperCase();
+      if (
+        (stype === "GROUP" ||
+          stype === "GROUP BOOKING" ||
+          stype === "COLLECTIVE") &&
+        Array.isArray(service.assigned_groups) &&
+        service.assigned_groups.length > 1
+      ) {
+        // Prompt user to select a group
+        session.step = "AWAIT_GROUP";
+        session.groups = service.assigned_groups;
+        await sendWhatsApp(from, {
+          type: "interactive",
+          interactive: {
+            type: "list",
+            body: { text: "Select a staff group:" },
+            action: {
+              button: "Choose Group",
+              sections: [
+                {
+                  title: "Groups",
+                  rows: service.assigned_groups.map((g, idx) => ({
+                    id: `group_${g}`,
+                    title: `Group ${idx + 1}`,
+                    description: g,
+                  })),
+                },
+              ],
+            },
+          },
+        });
+        return res.sendStatus(200);
+      }
+
       // Offer months (current + 2)
       const now = new Date();
       const months = [];
@@ -808,14 +844,16 @@ app.post("/webhook", async (req, res) => {
         bookingType = "staff";
       }
       if (
-        (stype === "GROUP" ||
-          stype === "GROUP BOOKING" ||
-          stype === "COLLECTIVE") &&
-        Array.isArray(session.selectedService.assigned_groups) &&
-        session.selectedService.assigned_groups.length > 0
+        stype === "GROUP" ||
+        stype === "GROUP BOOKING" ||
+        stype === "COLLECTIVE"
       ) {
-        formData.append("group_id", session.selectedService.assigned_groups[0]);
-        bookingType = "group";
+        const groupId =
+          session.selectedGroup || session.selectedService.assigned_groups?.[0];
+        if (groupId) {
+          formData.append("group_id", groupId);
+          bookingType = "group";
+        }
       }
       if (
         stype === "RESOURCE" &&
