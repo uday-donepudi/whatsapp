@@ -286,20 +286,15 @@ function waTextPrompt(prompt, id) {
 
 function waConfirmation(details) {
   return {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: {
-        text: `✅ Booking confirmed!\nService: ${details.service}\nDate: ${details.date}\nTime: ${details.time}\nRef: ${details.ref}\n\nView details: ${details.url}`,
-      },
-      action: {
-        buttons: [
-          {
-            type: "reply",
-            reply: { id: "cancel_booking", title: "Cancel" },
-          },
-        ],
-      },
+    type: "text",
+    text: {
+      body:
+        `✅ Booking confirmed!\n` +
+        `Service: ${details.service}\n` +
+        `Date: ${details.date}\n` +
+        `Time: ${details.time}\n` +
+        `Ref: ${details.ref}\n` +
+        (details.url ? `View details: ${details.url}` : ""),
     },
   };
 }
@@ -786,6 +781,7 @@ app.post("/webhook", async (req, res) => {
 
       // Dynamically add staff_id, group_id, or resource_id
       const stype = (session.selectedService.service_type || "").toUpperCase();
+      let bookingType = "";
       if (
         (stype === "APPOINTMENT" ||
           stype === "ONE-ON-ONE" ||
@@ -794,6 +790,7 @@ app.post("/webhook", async (req, res) => {
         session.selectedService.assigned_staffs.length > 0
       ) {
         formData.append("staff_id", session.selectedService.assigned_staffs[0]);
+        bookingType = "staff";
       }
       if (
         (stype === "GROUP" ||
@@ -803,6 +800,7 @@ app.post("/webhook", async (req, res) => {
         session.selectedService.assigned_groups.length > 0
       ) {
         formData.append("group_id", session.selectedService.assigned_groups[0]);
+        bookingType = "group";
       }
       if (
         stype === "RESOURCE" &&
@@ -813,6 +811,7 @@ app.post("/webhook", async (req, res) => {
           "resource_id",
           session.selectedService.assigned_resources[0]
         );
+        bookingType = "resource";
       }
 
       // Format from_time and to_time as dd-Mmm-yyyy HH:mm:ss
@@ -862,6 +861,24 @@ app.post("/webhook", async (req, res) => {
         })
       );
 
+      // --- Log all booking params before API call ---
+      log("Zoho Booking Params", {
+        service_id: session.selectedService.id,
+        bookingType,
+        staff_id: session.selectedService.assigned_staffs?.[0],
+        group_id: session.selectedService.assigned_groups?.[0],
+        resource_id: session.selectedService.assigned_resources?.[0],
+        from_time: fromTimeStr,
+        to_time: toTimeStr,
+        timezone: "Asia/Kolkata",
+        customer_details: {
+          name: session.customerName,
+          email: session.customerEmail,
+          phone_number: session.customerPhone,
+        },
+        notes: "Booked via WhatsApp",
+      });
+
       // --- Make Zoho appointment API call ---
       const zohoToken = await getSessionZohoToken(session);
       const zohoResp = await fetch(`${ZOHO_BASE}/appointment`, {
@@ -874,7 +891,6 @@ app.post("/webhook", async (req, res) => {
       const zohoText = await zohoResp.text();
       let zohoData;
       try {
-        // Remove invisible characters and whitespace
         zohoData = JSON.parse(zohoText.trim());
       } catch (err) {
         log("Zoho JSON.parse ERROR", err.message, "Raw Text:", zohoText);
