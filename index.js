@@ -506,7 +506,8 @@ app.post("/webhook", async (req, res) => {
           stype === "ONE-ON-ONE" ||
           stype === "ONE TO ONE") &&
         Array.isArray(service.assigned_staffs) &&
-        service.assigned_staffs.length > 1
+        service.assigned_staffs.length > 0 &&
+        service.let_customer_select_staff // <-- check this flag
       ) {
         // Fetch staff details from Zoho
         const staffUrl = `${ZOHO_BASE}/staffs?workspace_id=${WORKSPACE_ID}`;
