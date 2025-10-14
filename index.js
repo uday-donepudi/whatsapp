@@ -502,16 +502,43 @@ app.post("/webhook", async (req, res) => {
 
       const stype = (service.service_type || "").toUpperCase();
       if (
-        stype === "APPOINTMENT" ||
-        stype === "ONE-ON-ONE" ||
-        stype === "ONE TO ONE"
+        (stype === "APPOINTMENT" ||
+          stype === "ONE-ON-ONE" ||
+          stype === "ONE TO ONE") &&
+        Array.isArray(service.assigned_staffs) &&
+        service.assigned_staffs.length > 1
       ) {
-        const staffId =
-          session.selectedStaff || session.selectedService.assigned_staffs?.[0];
-        if (staffId) {
-          formData.append("staff_id", staffId);
-          bookingType = "staff";
-        }
+        // Fetch staff details from Zoho
+        const staffUrl = `${ZOHO_BASE}/staffs?workspace_id=${WORKSPACE_ID}`;
+        const { data } = await fetchZoho(staffUrl, {}, 3, session);
+        const allStaffs = data?.response?.returnvalue?.data || [];
+        // Filter only assigned staff for this service
+        const assignedStaffs = allStaffs.filter((s) =>
+          service.assigned_staffs.includes(s.id)
+        );
+        session.staffs = assignedStaffs;
+        session.step = "AWAIT_STAFF";
+        await sendWhatsApp(from, {
+          type: "interactive",
+          interactive: {
+            type: "list",
+            body: { text: "Select a staff member:" },
+            action: {
+              button: "Choose Staff",
+              sections: [
+                {
+                  title: "Staff",
+                  rows: assignedStaffs.map((s) => ({
+                    id: `staff_${s.id}`,
+                    title: s.name,
+                    description: s.email || s.phone || "",
+                  })),
+                },
+              ],
+            },
+          },
+        });
+        return res.sendStatus(200);
       }
 
       // Offer months (current + 2)
