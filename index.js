@@ -89,9 +89,36 @@ function formatTime(time24) {
   });
 }
 
-async function fetchZoho(url, opts = {}, retries = 3) {
+async function getSessionZohoToken(session) {
+  // If token exists and is less than 50 minutes old, reuse it
+  if (
+    session.zohoToken &&
+    session.zohoTokenTime &&
+    Date.now() - session.zohoTokenTime < 50 * 60 * 1000
+  ) {
+    return session.zohoToken;
+  }
+  // Otherwise, fetch new token and cache it
+  const refresh_token =
+    "1000.91875743c0b7e6f959395937ee30da9e.c34a592d113ae37d2e8736718d590cca";
+  const client_id = "1000.Q2XXQN7UNWP5L2F86ZVUFRSK1VEA5V";
+  const client_secret = "5fc3eba15a1312ce15056c953027b2b314b6afe2b3";
+  const url = `https://accounts.zoho.in/oauth/v2/token?refresh_token=${refresh_token}&client_id=${client_id}&client_secret=${client_secret}&grant_type=refresh_token`;
+
+  const resp = await fetch(url, { method: "POST" });
+  const data = await resp.json();
+  log("Zoho AccessToken Response", resp.status, JSON.stringify(data));
+  session.zohoToken = data.access_token;
+  session.zohoTokenTime = Date.now();
+  return data.access_token;
+}
+
+// Update fetchZoho to use the session token
+async function fetchZoho(url, opts = {}, retries = 3, session = null) {
   try {
-    const zohoToken = await getZohoAccessToken();
+    const zohoToken = session
+      ? await getSessionZohoToken(session)
+      : await getZohoAccessToken();
     const resp = await fetch(url, {
       ...opts,
       headers: {
@@ -101,7 +128,7 @@ async function fetchZoho(url, opts = {}, retries = 3) {
     });
     if (resp.status === 429 && retries > 0) {
       await new Promise((r) => setTimeout(r, 1000 * (4 - retries)));
-      return fetchZoho(url, opts, retries - 1);
+      return fetchZoho(url, opts, retries - 1, session);
     }
     const text = await resp.text();
     let data;
@@ -116,7 +143,7 @@ async function fetchZoho(url, opts = {}, retries = 3) {
     log("Zoho fetch error", err);
     if (retries > 0) {
       await new Promise((r) => setTimeout(r, 1000 * (4 - retries)));
-      return fetchZoho(url, opts, retries - 1);
+      return fetchZoho(url, opts, retries - 1, session);
     }
     throw err;
   }
@@ -429,7 +456,10 @@ app.post("/webhook", async (req, res) => {
     ) {
       // Fetch services from Zoho
       const { data } = await fetchZoho(
-        `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`
+        `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`,
+        {},
+        3,
+        session
       );
       const services = data?.response?.returnvalue?.data || [];
       if (!services.length) {
@@ -508,7 +538,7 @@ app.post("/webhook", async (req, res) => {
           .split(" ")[0]
           .substr(0, 3)}-${year}`;
         const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateStr}`;
-        const { data } = await fetchZoho(slotUrl);
+        const { data } = await fetchZoho(slotUrl, {}, 3, session);
         const slots = data?.response?.returnvalue?.data;
         if (Array.isArray(slots) && slots.length > 0) {
           availableDates.push({
@@ -584,7 +614,7 @@ app.post("/webhook", async (req, res) => {
       session.selectedDate = dateObj;
       // Fetch slots for this date
       const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateObj.label}`;
-      const { data } = await fetchZoho(slotUrl);
+      const { data } = await fetchZoho(slotUrl, {}, 3, session);
       const slots = Array.isArray(data?.response?.returnvalue?.data)
         ? data.response.returnvalue.data
         : [];
@@ -833,7 +863,7 @@ app.post("/webhook", async (req, res) => {
       );
 
       // --- Make Zoho appointment API call ---
-      const zohoToken = await getZohoAccessToken();
+      const zohoToken = await getSessionZohoToken(session);
       const zohoResp = await fetch(`${ZOHO_BASE}/appointment`, {
         method: "POST",
         headers: {
@@ -899,16 +929,3 @@ app.get("/debug/session/:id", (req, res) => {
 
 // --- Start server ---
 app.listen(PORT, () => log(`🚀 Webhook running on port ${PORT}`));
-
-async function getZohoAccessToken() {
-  const refresh_token =
-    "1000.91875743c0b7e6f959395937ee30da9e.c34a592d113ae37d2e8736718d590cca";
-  const client_id = "1000.Q2XXQN7UNWP5L2F86ZVUFRSK1VEA5V";
-  const client_secret = "5fc3eba15a1312ce15056c953027b2b314b6afe2b3";
-  const url = `https://accounts.zoho.in/oauth/v2/token?refresh_token=${refresh_token}&client_id=${client_id}&client_secret=${client_secret}&grant_type=refresh_token`;
-
-  const resp = await fetch(url, { method: "POST" });
-  const data = await resp.json();
-  log("Zoho AccessToken Response", resp.status, JSON.stringify(data));
-  return data.access_token;
-}
