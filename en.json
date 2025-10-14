@@ -16,7 +16,7 @@
   "invalidPhone": "Phone invalid. Please enter again (e.g., 9xxxxxxxxx or +91xxxxxxxxxx):",
   "bookingConfirmed": "✅ Booking confirmed!",
   "bookingFailed": "Booking failed. Please try again.",
-  "noServices": "No services found. Please try again later.",
+  "noServices": "No services available at the moment.",
   "noSlotsMonth": "No slots in {month}. Choose another month.",
   "noSlotsDate": "No slots available. Choose another date.",
   "invalidService": "Invalid service. Please try again.",
@@ -35,5 +35,8 @@
     "en": "English",
     "hi": "हिन्दी",
     "te": "తెలుగు"
-  }
+  },
+  "chooseService": "Choose Service",
+  "services": "Services",
+  "noStaff": "No staff available for this service."
 }

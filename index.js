@@ -532,9 +532,18 @@ app.post("/webhook", async (req, res) => {
       const btnId = msg.interactive.button_reply.id;
 
       if (btnId === "book_btn") {
-        session.step = "AWAIT_SERVICE";
-        await sendWhatsApp(from, waTextPrompt(session, "selectService"));
-        return res.sendStatus(200);
+        // Fetch services from Zoho
+        const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
+        const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
+
+        if (status === 200 && data.data?.services?.length) {
+          session.step = "AWAIT_SERVICE";
+          await sendWhatsApp(from, waServiceList(session, data.data.services));
+          return res.sendStatus(200);
+        } else {
+          await sendWhatsApp(from, waError(session, "noServices"));
+          return res.sendStatus(200);
+        }
       }
 
       if (btnId === "help_btn") {
@@ -566,32 +575,27 @@ app.post("/webhook", async (req, res) => {
     // ===========================
     // 5. SERVICE SELECTION
     // ===========================
-    // Handle repeated "Book" button presses
     if (
       session.step === "AWAIT_SERVICE" &&
       msg.type === "interactive" &&
-      msg.interactive.button_reply?.id === "book_btn"
+      msg.interactive.list_reply
     ) {
-      await sendWhatsApp(from, waTextPrompt(session, "selectService"));
-      return res.sendStatus(200);
-    }
+      const serviceId = msg.interactive.list_reply.id;
+      session.data.serviceId = serviceId;
+      session.data.serviceName = msg.interactive.list_reply.title;
 
-    // Handle unexpected input during service selection
-    if (session.step === "AWAIT_SERVICE" && msg.type !== "text") {
-      await sendWhatsApp(from, waError(session, "invalidService"));
-      return res.sendStatus(200);
-    }
+      // Fetch staff for this service
+      const staffUrl = `${ZOHO_BASE}/staff?workspace_id=${WORKSPACE_ID}&service_id=${serviceId}`;
+      const { status, data } = await fetchZoho(staffUrl, {}, 3, session);
 
-    // Handle service name (text input)
-    if (
-      session.step === "AWAIT_SERVICE" &&
-      msg.type === "text" &&
-      msg.text?.body
-    ) {
-      session.data.service = msg.text.body;
-      session.step = "AWAIT_NAME";
-      await sendWhatsApp(from, waTextPrompt(session, "enterName"));
-      return res.sendStatus(200);
+      if (status === 200 && data.data?.staff?.length) {
+        session.step = "AWAIT_STAFF";
+        await sendWhatsApp(from, waStaffList(session, data.data.staff));
+        return res.sendStatus(200);
+      } else {
+        await sendWhatsApp(from, waError(session, "noStaff"));
+        return res.sendStatus(200);
+      }
     }
 
     // ===========================
