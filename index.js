@@ -458,6 +458,8 @@ app.post("/webhook", async (req, res) => {
     const entry = req.body.entry?.[0];
     const changes = entry?.changes?.[0];
     const value = changes?.value;
+
+    // Ignore status updates
     if (!value?.messages?.length) return res.sendStatus(200);
 
     const msg = value.messages[0];
@@ -465,13 +467,14 @@ app.post("/webhook", async (req, res) => {
     const msgId = msg.id;
     const session = getSession(from);
 
-    // Idempotency: skip duplicate message id
+    // Idempotency check
     if (session.lastMsgId === msgId) return res.sendStatus(200);
     session.lastMsgId = msgId;
 
-    // 1. Language selection
+    // ===========================
+    // 1. LANGUAGE SELECTION
+    // ===========================
     if (!session.language) {
-      // If user is replying to language selection
       if (
         session.step === "AWAIT_LANGUAGE" &&
         msg.type === "interactive" &&
@@ -483,7 +486,8 @@ app.post("/webhook", async (req, res) => {
         await sendWhatsApp(from, waMainMenu(session));
         return res.sendStatus(200);
       }
-      // Otherwise, prompt for language selection
+
+      // Prompt for language
       await sendWhatsApp(from, {
         type: "interactive",
         interactive: {
@@ -508,30 +512,37 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 2. Main menu (only if step is INIT or AWAIT_MAIN)
-    if (session.step === "INIT" || session.step === "AWAIT_MAIN") {
+    // ===========================
+    // 2. MAIN MENU (if step is INIT or AWAIT_MAIN)
+    // ===========================
+    if (session.step === "INIT") {
       await sendWhatsApp(from, waMainMenu(session));
       session.step = "AWAIT_MAIN";
       return res.sendStatus(200);
     }
 
-    // 3. Handle main menu button presses
+    // ===========================
+    // 3. HANDLE MAIN MENU BUTTONS
+    // ===========================
     if (
       session.step === "AWAIT_MAIN" &&
       msg.type === "interactive" &&
       msg.interactive.button_reply
     ) {
       const btnId = msg.interactive.button_reply.id;
+
       if (btnId === "book_btn") {
         session.step = "AWAIT_SERVICE";
         await sendWhatsApp(from, waTextPrompt(session, "selectService"));
         return res.sendStatus(200);
       }
+
       if (btnId === "help_btn") {
         session.step = "AWAIT_HELP";
         await sendWhatsApp(from, waHelpMenu(session));
         return res.sendStatus(200);
       }
+
       if (btnId === "support_btn") {
         session.step = "AWAIT_SUPPORT";
         await sendWhatsApp(from, waSupportMenu(session));
@@ -539,7 +550,9 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // 4. Help/Support: Home button returns to main menu
+    // ===========================
+    // 4. HELP/SUPPORT: HOME BUTTON
+    // ===========================
     if (
       (session.step === "AWAIT_HELP" || session.step === "AWAIT_SUPPORT") &&
       msg.type === "interactive" &&
@@ -550,7 +563,26 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 5. Service selection (after Book)
+    // ===========================
+    // 5. SERVICE SELECTION
+    // ===========================
+    // Handle repeated "Book" button presses
+    if (
+      session.step === "AWAIT_SERVICE" &&
+      msg.type === "interactive" &&
+      msg.interactive.button_reply?.id === "book_btn"
+    ) {
+      await sendWhatsApp(from, waTextPrompt(session, "selectService"));
+      return res.sendStatus(200);
+    }
+
+    // Handle unexpected input during service selection
+    if (session.step === "AWAIT_SERVICE" && msg.type !== "text") {
+      await sendWhatsApp(from, waError(session, "invalidService"));
+      return res.sendStatus(200);
+    }
+
+    // Handle service name (text input)
     if (
       session.step === "AWAIT_SERVICE" &&
       msg.type === "text" &&
@@ -562,24 +594,9 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Handle repeated "Book" button presses while waiting for service name
-    if (
-      session.step === "AWAIT_SERVICE" &&
-      msg.type === "interactive" &&
-      msg.interactive.button_reply?.id === "book_btn"
-    ) {
-      // User pressed "Book" again, re-prompt for service name
-      await sendWhatsApp(from, waTextPrompt(session, "selectService"));
-      return res.sendStatus(200);
-    }
-
-    // Handle unexpected input during service selection
-    if (session.step === "AWAIT_SERVICE" && msg.type !== "text") {
-      await sendWhatsApp(from, waError(session, "invalidService"));
-      return res.sendStatus(200);
-    }
-
-    // Next: handle name input
+    // ===========================
+    // 6. NAME INPUT
+    // ===========================
     if (
       session.step === "AWAIT_NAME" &&
       msg.type === "text" &&
@@ -591,7 +608,9 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Next: handle email input
+    // ===========================
+    // 7. EMAIL INPUT
+    // ===========================
     if (
       session.step === "AWAIT_EMAIL" &&
       msg.type === "text" &&
@@ -603,14 +622,16 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Next: handle phone input
+    // ===========================
+    // 8. PHONE INPUT
+    // ===========================
     if (
       session.step === "AWAIT_PHONE" &&
       msg.type === "text" &&
       msg.text?.body
     ) {
       session.data.phone = msg.text.body;
-      // Here you would confirm booking, etc.
+      // Confirm booking
       await sendWhatsApp(from, {
         type: "text",
         text: { body: t(session, "bookingConfirmed") },
@@ -620,7 +641,9 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Fallback: always return to main menu
+    // ===========================
+    // FALLBACK: Return to main menu
+    // ===========================
     session.step = "AWAIT_MAIN";
     await sendWhatsApp(from, waMainMenu(session));
     return res.sendStatus(200);
