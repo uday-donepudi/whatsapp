@@ -525,7 +525,6 @@ app.post("/webhook", async (req, res) => {
           session.services = services;
           session.step = "AWAIT_SERVICE";
           const serviceList = waServiceList(session, services);
-          log("DEBUG Service List", JSON.stringify(serviceList));
           await sendWhatsApp(from, serviceList);
           return res.sendStatus(200);
         } else {
@@ -610,24 +609,26 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Offer months (current + 2)
-      const now = new Date();
-      const months = [];
-      for (let i = 0; i < 3; ++i) {
-        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-        months.push({
-          id: `month_${d.getFullYear()}_${String(d.getMonth() + 1).padStart(
-            2,
-            "0"
-          )}`,
-          label: d.toLocaleString("en-US", { month: "long", year: "numeric" }),
-          year: d.getFullYear(),
-          month: d.getMonth() + 1,
-        });
+      // NEW LOGIC: Immediately search for available slots
+      await sendWhatsApp(from, waSearchingMessage(session));
+
+      const today = new Date();
+      const { slots, nextSearchDate } = await findNextAvailableSlots(
+        session,
+        today,
+        3,
+        60
+      );
+
+      if (slots.length === 0) {
+        await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
+        session.step = "AWAIT_MAIN";
+        return res.sendStatus(200);
       }
-      session.months = months;
-      await sendWhatsApp(from, waMonthList(session, months));
-      session.step = "AWAIT_MONTH";
+
+      session.searchStartDate = nextSearchDate.toISOString();
+      session.step = "AWAIT_SLOT";
+      await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
       return res.sendStatus(200);
     }
 
@@ -642,161 +643,31 @@ app.post("/webhook", async (req, res) => {
       const staffId = msg.interactive.list_reply.id.replace("staff_", "");
       session.selectedStaff = staffId;
 
-      // Offer months
-      const now = new Date();
-      const months = [];
-      for (let i = 0; i < 3; ++i) {
-        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-        months.push({
-          id: `month_${d.getFullYear()}_${String(d.getMonth() + 1).padStart(
-            2,
-            "0"
-          )}`,
-          label: d.toLocaleString("en-US", { month: "long", year: "numeric" }),
-          year: d.getFullYear(),
-          month: d.getMonth() + 1,
-        });
-      }
-      session.months = months;
-      await sendWhatsApp(from, waMonthList(session, months));
-      session.step = "AWAIT_MONTH";
-      return res.sendStatus(200);
-    }
+      // NEW LOGIC: Immediately search for available slots
+      await sendWhatsApp(from, waSearchingMessage(session));
 
-    // ===========================
-    // 8. MONTH SELECTION
-    // ===========================
-    if (
-      session.step === "AWAIT_MONTH" &&
-      msg.type === "interactive" &&
-      msg.interactive.list_reply
-    ) {
-      const monthId = msg.interactive.list_reply.id;
-      const monthObj = (session.months || []).find((m) => m.id === monthId);
-      if (!monthObj) {
-        await sendWhatsApp(from, waError(session, "invalidMonth"));
-        session.step = "AWAIT_SERVICE";
-        return res.sendStatus(200);
-      }
-      session.selectedMonth = monthObj;
-      const { year, month } = monthObj;
-      const lastDay = new Date(year, month, 0).getDate();
-      const availableDates = [];
       const today = new Date();
-      const startDay =
-        year === today.getFullYear() && month === today.getMonth() + 1
-          ? today.getDate()
-          : 1;
-      for (let day = startDay; day <= lastDay; ++day) {
-        const dateStr = `${String(day).padStart(2, "0")}-${monthObj.label
-          .split(" ")[0]
-          .substr(0, 3)}-${year}`;
-        const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateStr}`;
-        const { data } = await fetchZoho(slotUrl, {}, 3, session);
-        const slots = data?.response?.returnvalue?.data;
-        if (Array.isArray(slots) && slots.length > 0) {
-          availableDates.push({
-            id: `date_${dateStr}`,
-            label: dateStr,
-            slots: slots.length,
-          });
-        }
-      }
-      session.availableDates = availableDates;
-      session.datePage = 0;
-
-      if (!availableDates.length) {
-        await sendWhatsApp(from, waError(session, "noSlotsInMonth"));
-        session.step = "AWAIT_MONTH";
-        return res.sendStatus(200);
-      }
-
-      const pageSize = 9;
-      const pageDates = availableDates.slice(0, pageSize);
-      let waMsg = waDateList(session, pageDates, monthObj.label);
-
-      if (availableDates.length > pageSize) {
-        waMsg.interactive.action.sections[0].rows.push({
-          id: "show_more_dates",
-          title: t(session, "showMore"),
-        });
-      }
-
-      await sendWhatsApp(from, waMsg);
-      session.step = "AWAIT_DATE";
-      return res.sendStatus(200);
-    }
-
-    // ===========================
-    // 9. DATE SELECTION
-    // ===========================
-    if (
-      session.step === "AWAIT_DATE" &&
-      msg.type === "interactive" &&
-      msg.interactive.list_reply
-    ) {
-      const dateId = msg.interactive.list_reply.id;
-
-      if (dateId === "show_more_dates") {
-        const pageSize = 9;
-        session.datePage = (session.datePage || 0) + 1;
-        const start = session.datePage * pageSize;
-        const pageDates = session.availableDates.slice(start, start + pageSize);
-        let waMsg = waDateList(session, pageDates, session.selectedMonth.label);
-
-        if (session.availableDates.length > start + pageSize) {
-          waMsg.interactive.action.sections[0].rows.push({
-            id: "show_more_dates",
-            title: t(session, "showMore"),
-          });
-        }
-        await sendWhatsApp(from, waMsg);
-        return res.sendStatus(200);
-      }
-
-      const dateObj = (session.availableDates || []).find(
-        (d) => d.id === dateId
+      const { slots, nextSearchDate } = await findNextAvailableSlots(
+        session,
+        today,
+        3,
+        60
       );
-      if (!dateObj) {
-        await sendWhatsApp(from, waError(session, "invalidDate"));
-        session.step = "AWAIT_MONTH";
-        return res.sendStatus(200);
-      }
-      session.selectedDate = dateObj;
-      const slotUrl = `${ZOHO_BASE}/availableslots?service_id=${session.selectedService.id}&selected_date=${dateObj.label}`;
-      const { data } = await fetchZoho(slotUrl, {}, 3, session);
-      const slots = Array.isArray(data?.response?.returnvalue?.data)
-        ? data.response.returnvalue.data
-        : [];
-      if (!slots.length) {
+
+      if (slots.length === 0) {
         await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
-        session.step = "AWAIT_DATE";
+        session.step = "AWAIT_MAIN";
         return res.sendStatus(200);
       }
-      session.slots = slots.map((s) => ({
-        id: `slot_${dateObj.label}_${s.replace(/:/g, "-")}`,
-        label: s,
-        time: s,
-      }));
-      session.slotPage = 0;
 
-      const slotPageSize = 9;
-      const pageSlots = session.slots.slice(0, slotPageSize);
-      let waMsg = waSlotList(session, pageSlots, dateObj.label);
-
-      if (session.slots.length > slotPageSize) {
-        waMsg.interactive.action.sections[0].rows.push({
-          id: "show_more_slots",
-          title: t(session, "showMore"),
-        });
-      }
-      await sendWhatsApp(from, waMsg);
+      session.searchStartDate = nextSearchDate.toISOString();
       session.step = "AWAIT_SLOT";
+      await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
       return res.sendStatus(200);
     }
 
     // ===========================
-    // 10. SLOT SELECTION
+    // 8. SLOT SELECTION (NEW LOGIC)
     // ===========================
     if (
       session.step === "AWAIT_SLOT" &&
@@ -805,30 +676,44 @@ app.post("/webhook", async (req, res) => {
     ) {
       const slotId = msg.interactive.list_reply.id;
 
+      // Handle "Show More" request
       if (slotId === "show_more_slots") {
-        const slotPageSize = 9;
-        session.slotPage = (session.slotPage || 0) + 1;
-        const start = session.slotPage * slotPageSize;
-        const pageSlots = session.slots.slice(start, start + slotPageSize);
-        let waMsg = waSlotList(session, pageSlots, session.selectedDate.label);
+        await sendWhatsApp(from, waSearchingMessage(session));
 
-        if (session.slots.length > start + slotPageSize) {
-          waMsg.interactive.action.sections[0].rows.push({
-            id: "show_more_slots",
-            title: t(session, "showMore"),
-          });
+        const startDate = new Date(session.searchStartDate);
+        const { slots, nextSearchDate } = await findNextAvailableSlots(
+          session,
+          startDate,
+          3,
+          60
+        );
+
+        if (slots.length === 0) {
+          await sendWhatsApp(from, waError(session, "noMoreSlots"));
+          session.step = "AWAIT_MAIN";
+          return res.sendStatus(200);
         }
-        await sendWhatsApp(from, waMsg);
+
+        session.searchStartDate = nextSearchDate.toISOString();
+        await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
         return res.sendStatus(200);
       }
 
-      const slotObj = (session.slots || []).find((s) => s.id === slotId);
-      if (!slotObj) {
+      // User selected a specific slot
+      const [, dateStr, timeStr] = slotId.match(/slot_(.+?)_(.+)/) || [];
+      if (!dateStr || !timeStr) {
         await sendWhatsApp(from, waError(session, "invalidSlot"));
-        session.step = "AWAIT_DATE";
         return res.sendStatus(200);
       }
-      session.selectedSlot = slotObj;
+
+      session.selectedSlot = {
+        id: slotId,
+        label: timeStr.replace(/-/g, ":"),
+        date: dateStr,
+        time: timeStr.replace(/-/g, ":"),
+      };
+      session.selectedDate = { label: dateStr };
+
       await sendWhatsApp(from, waTextPrompt(session, "enterName"));
       session.step = "AWAIT_NAME";
       session.nameAttempts = 0;
@@ -836,7 +721,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
-    // 11. NAME INPUT
+    // 9. NAME INPUT
     // ===========================
     if (session.step === "AWAIT_NAME" && msg.type === "text") {
       const name = msg.text.body.trim();
@@ -858,7 +743,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
-    // 12. EMAIL INPUT
+    // 10. EMAIL INPUT
     // ===========================
     if (session.step === "AWAIT_EMAIL" && msg.type === "text") {
       const email = msg.text.body.trim();
@@ -880,7 +765,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
-    // 13. PHONE INPUT & BOOKING
+    // 11. PHONE INPUT & BOOKING
     // ===========================
     if (session.step === "AWAIT_PHONE" && msg.type === "text") {
       const phone = msg.text.body.trim();
@@ -950,7 +835,7 @@ app.post("/webhook", async (req, res) => {
       }
 
       const dateLabel = session.selectedDate.label;
-      const slotTime = session.selectedSlot.label;
+      const slotTime = session.selectedSlot.time;
       let [hour, minute] = slotTime.split(":");
       let ampm = "";
       if (minute && minute.includes(" ")) {
@@ -996,9 +881,7 @@ app.post("/webhook", async (req, res) => {
       log("Zoho Booking Params", {
         service_id: session.selectedService.id,
         bookingType,
-        staff_id: session.selectedService.assigned_staffs?.[0],
-        group_id: session.selectedService.assigned_groups?.[0],
-        resource_id: session.selectedService.assigned_resources?.[0],
+        staff_id: session.selectedStaff,
         from_time: fromTimeStr,
         to_time: toTimeStr,
         timezone: "Asia/Kolkata",
@@ -1038,7 +921,7 @@ app.post("/webhook", async (req, res) => {
           waConfirmation(session, {
             service: appt.service_name || session.selectedService.name,
             date: appt.start_time || session.selectedDate.label,
-            time: appt.duration || session.selectedSlot.label,
+            time: appt.duration || session.selectedSlot.time,
             ref: appt.booking_id || appt.id || "N/A",
             url: appt.summary_url || appt.appointment_url || "",
           })
