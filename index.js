@@ -441,6 +441,113 @@ function waSupportMenu(session) {
   };
 }
 
+// Add new utility function for scanning slots
+async function findNextAvailableSlots(
+  session,
+  startDate,
+  limit = 3,
+  maxDaysToScan = 60
+) {
+  const slots = [];
+  const serviceId = session.selectedService.id;
+  let currentDate = new Date(startDate);
+  const endDate = new Date(startDate);
+  endDate.setDate(endDate.getDate() + maxDaysToScan);
+
+  while (slots.length < limit && currentDate <= endDate) {
+    const dateStr = formatDateForZoho(currentDate);
+
+    // Build URL with staff_id if available
+    let slotUrl = `${ZOHO_BASE}/availableslots?service_id=${serviceId}&selected_date=${dateStr}`;
+    if (session.selectedStaff) {
+      slotUrl += `&staff_id=${session.selectedStaff}`;
+    }
+
+    const { data } = await fetchZoho(slotUrl, {}, 3, session);
+    const availableSlots = data?.response?.returnvalue?.data;
+
+    if (Array.isArray(availableSlots) && availableSlots.length > 0) {
+      for (const timeSlot of availableSlots) {
+        if (slots.length >= limit) break;
+        slots.push({
+          id: `slot_${dateStr}_${timeSlot.replace(/:/g, "-")}`,
+          label: `${dateStr} ${timeSlot}`,
+          date: dateStr,
+          time: timeSlot,
+        });
+      }
+    }
+
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  return {
+    slots,
+    nextSearchDate: currentDate,
+  };
+}
+
+function formatDateForZoho(date) {
+  const day = String(date.getDate()).padStart(2, "0");
+  const monthNames = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const month = monthNames[date.getMonth()];
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
+}
+
+function waSlotListWithShowMore(session, slots, hasMore) {
+  const rows = slots.map((s) => ({
+    id: s.id,
+    title: s.label.length > 24 ? s.label.slice(0, 21) + "..." : s.label,
+  }));
+
+  if (hasMore) {
+    rows.push({
+      id: "show_more_slots",
+      title: t(session, "showMore"),
+    });
+  }
+
+  return {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: t(session, "availableSlots") },
+      action: {
+        button: t(session, "selectSlot"),
+        sections: [
+          {
+            title: t(session, "slots"),
+            rows,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function waSearchingMessage(session) {
+  return {
+    type: "text",
+    text: {
+      body: t(session, "searchingSlots"),
+    },
+  };
+}
+
 // ---------------------
 // Webhook verification
 // ---------------------

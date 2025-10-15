@@ -46,5 +46,8 @@
   "bookingCancelled": "Booking cancelled. Start again from main menu.",
   "bookingFailed": "Booking failed. Try again or contact support.",
   "helpText": "How to Book:\n\n1. Select 'Book Appointment'\n2. Choose service\n3. Select doctor (if needed)\n4. Pick date & time\n5. Enter details\n6. Confirm\n\nNeed help? Contact support.",
-  "supportText": "Customer Support\n\nWe're here to help!\n\nReply with your query or contact us directly.\n\nResponse time: 24 hours (business days)\n\nThank you!"
+  "supportText": "Customer Support\n\nWe're here to help!\n\nReply with your query or contact us directly.\n\nResponse time: 24 hours (business days)\n\nThank you!",
+  "searchingSlots": "Finding the next available slots for you... ⏳",
+  "availableSlots": "Available slots:",
+  "noMoreSlots": "No further slots are available."
 }
