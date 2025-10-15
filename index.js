@@ -943,34 +943,83 @@ app.post("/webhook", async (req, res) => {
 
       const dateLabel = session.selectedDate.label;
       const slotTime = session.selectedSlot.time;
-      let [hour, minute] = slotTime.split(":");
-      let ampm = "";
-      if (minute && minute.includes(" ")) {
-        [minute, ampm] = minute.split(" ");
-        hour = parseInt(hour, 10);
-        if (ampm.toUpperCase() === "PM" && hour < 12) hour += 12;
-        if (ampm.toUpperCase() === "AM" && hour === 12) hour = 0;
+
+      // Parse time - handle both "14:00" and "02:00 PM" formats
+      let hour, minute;
+      const timeMatch = slotTime.match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+
+      if (!timeMatch) {
+        log("Invalid time format:", slotTime);
+        await sendWhatsApp(from, waError(session, "bookingFailed"));
+        clearSession(from);
+        return res.sendStatus(200);
       }
+
+      hour = parseInt(timeMatch[1], 10);
+      minute = timeMatch[2];
+      const ampm = timeMatch[3]?.toUpperCase();
+
+      // Convert to 24-hour format if AM/PM is present
+      if (ampm) {
+        if (ampm === "PM" && hour < 12) hour += 12;
+        if (ampm === "AM" && hour === 12) hour = 0;
+      }
+
       hour = hour.toString().padStart(2, "0");
-      minute = minute ? minute.padStart(2, "0") : "00";
       const fromTimeStr = `${dateLabel} ${hour}:${minute}:00`;
 
+      // Calculate end time
       let duration = 30;
       if (session.selectedService.duration) {
         const match = session.selectedService.duration.match(/(\d+)/);
         if (match) duration = parseInt(match[1], 10);
       }
+
+      // Create proper Date object for IST timezone
+      const [day, month, year] = dateLabel.split("-");
+      const monthIndex = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ].indexOf(month);
       const fromDateObj = new Date(
-        `${dateLabel} ${hour}:${minute}:00 GMT+0530`
+        year,
+        monthIndex,
+        parseInt(day),
+        parseInt(hour),
+        parseInt(minute),
+        0
       );
+
       const toDateObj = new Date(fromDateObj.getTime() + duration * 60000);
       const toHour = toDateObj.getHours().toString().padStart(2, "0");
       const toMinute = toDateObj.getMinutes().toString().padStart(2, "0");
       const toDay = toDateObj.getDate().toString().padStart(2, "0");
-      const toMonth = toDateObj.toLocaleString("en-GB", { month: "short" });
+      const toMonthName = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ][toDateObj.getMonth()];
       const toYear = toDateObj.getFullYear();
-      const toDateLabel = `${toDay}-${toMonth}-${toYear}`;
-      const toTimeStr = `${toDateLabel} ${toHour}:${toMinute}:00`;
+      const toTimeStr = `${toDay}-${toMonthName}-${toYear} ${toHour}:${toMinute}:00`;
 
       formData.append("from_time", fromTimeStr);
       formData.append("to_time", toTimeStr);
