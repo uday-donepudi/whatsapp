@@ -555,32 +555,23 @@ function waSearchingMessage(session) {
 
 // Add payment-related functions
 async function createStripePaymentLink(session, service) {
-  if (!stripe) {
-    log("Stripe not configured, skipping payment");
-    return null;
-  }
-
   try {
-    const priceInCents = Math.round(service.price * 100); // Convert to paise (smallest unit)
+    const priceInCents = Math.round(service.price * 100); // Convert to cents
 
-    // DOMESTIC PAYMENT: For Indian customers only
     const paymentLink = await stripe.paymentLinks.create({
       line_items: [
         {
           price_data: {
-            currency: "inr", // ← Indian Rupees for domestic payments
+            currency: service.currency?.toLowerCase() || "inr",
             product_data: {
               name: service.name,
-              description: `Appointment booking - ${service.name} on ${session.selectedDate.label} at ${session.selectedSlot.time}`,
+              description: `Appointment on ${session.selectedDate.label} at ${session.selectedSlot.time}`,
             },
-            unit_amount: priceInCents, // Amount in paise
+            unit_amount: priceInCents,
           },
           quantity: 1,
         },
       ],
-      // DOMESTIC: Billing address optional for Indian customers
-      billing_address_collection: "auto",
-
       after_completion: {
         type: "redirect",
         redirect: {
@@ -592,13 +583,10 @@ async function createStripePaymentLink(session, service) {
       metadata: {
         session_id: session.id,
         user_phone: session.customerPhone,
-        customer_name: session.customerName,
-        customer_email: session.customerEmail,
         service_id: service.id,
         slot_date: session.selectedDate.label,
         slot_time: session.selectedSlot.time,
         staff_id: session.selectedStaff || "none",
-        payment_type: "domestic", // ← Mark as domestic payment
       },
     });
 
@@ -1059,11 +1047,6 @@ app.get("/debug/session/:id", (req, res) => {
 app.listen(PORT, () => log(`🚀 Webhook running on port ${PORT}`));
 
 async function verifyStripePayment(session) {
-  if (!stripe) {
-    log("Stripe not configured");
-    return false;
-  }
-
   try {
     // Search for successful payments matching this session
     const payments = await stripe.checkout.sessions.list({
@@ -1071,23 +1054,12 @@ async function verifyStripePayment(session) {
     });
 
     for (const payment of payments.data) {
-      if (payment.metadata?.session_id === session.id) {
-        // Check payment status
-        if (payment.payment_status !== "paid") {
-          log("Payment not completed yet");
-          return false;
-        }
-
-        // Store payment details
+      if (
+        payment.metadata?.session_id === session.id &&
+        payment.payment_status === "paid"
+      ) {
         session.stripePaymentId = payment.id;
         session.stripePaymentIntentId = payment.payment_intent;
-
-        log("Domestic payment verified:", {
-          payment_id: payment.id,
-          amount: payment.amount_total / 100,
-          currency: payment.currency,
-        });
-
         return true;
       }
     }
@@ -1236,7 +1208,6 @@ async function createZohoAppointment(session, userPhone) {
   let notes = "Booked via WhatsApp";
   if (session.stripePaymentId) {
     notes += ` | Payment ID: ${session.stripePaymentId}`;
-    notes += ` | Domestic Payment`; // ← Track as domestic
   }
   formData.append("notes", notes);
 
