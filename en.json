@@ -49,5 +49,13 @@
   "supportText": "Customer Support\n\nWe're here to help!\n\nReply with your query or contact us directly.\n\nResponse time: 24 hours (business days)\n\nThank you!",
   "searchingSlots": "Finding the next available slots for you... ⏳",
   "availableSlots": "Available slots:",
-  "noMoreSlots": "No further slots are available."
+  "noMoreSlots": "No further slots are available.",
+  "paymentRequired": "Payment Required",
+  "amount": "Amount",
+  "paymentLink": "Click here to pay",
+  "paymentInstructions": "Complete the payment and reply 'paid' to confirm your booking.",
+  "paymentPending": "⏳ Payment pending. Please complete the payment using the link sent earlier and reply 'paid' when done.",
+  "paymentSuccess": "Payment received successfully!",
+  "bookingInProgress": "Creating your appointment...",
+  "paymentLinkFailed": "Unable to create payment link. Please try again or contact support."
 }

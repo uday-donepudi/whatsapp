@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import { FormData } from "undici";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
+import Stripe from "stripe";
 
 dotenv.config();
 
@@ -21,6 +22,10 @@ const ZOHO_TOKEN = process.env.ZOHO_TOKEN;
 const WHATSAPP_NUMBER_ID = process.env.WHATSAPP_NUMBER_ID;
 const WORKSPACE_ID = process.env.WORKSPACE_ID;
 const PORT = process.env.PORT || 3000;
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY; // Add this
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET; // Add this
+
+const stripe = new Stripe(STRIPE_SECRET_KEY);
 
 const ZOHO_BASE = "https://www.zohoapis.in/bookings/v1/json";
 const WHATSAPP_API = `https://graph.facebook.com/v17.0/${WHATSAPP_NUMBER_ID}/messages`;
@@ -548,6 +553,78 @@ function waSearchingMessage(session) {
   };
 }
 
+// Add payment-related functions
+async function createStripePaymentLink(session, service) {
+  try {
+    const priceInCents = Math.round(service.price * 100); // Convert to cents
+
+    const paymentLink = await stripe.paymentLinks.create({
+      line_items: [
+        {
+          price_data: {
+            currency: service.currency?.toLowerCase() || "inr",
+            product_data: {
+              name: service.name,
+              description: `Appointment on ${session.selectedDate.label} at ${session.selectedSlot.time}`,
+            },
+            unit_amount: priceInCents,
+          },
+          quantity: 1,
+        },
+      ],
+      after_completion: {
+        type: "redirect",
+        redirect: {
+          url: `${
+            process.env.BASE_URL || "https://yourdomain.com"
+          }/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        },
+      },
+      metadata: {
+        session_id: session.id,
+        user_phone: session.customerPhone,
+        service_id: service.id,
+        slot_date: session.selectedDate.label,
+        slot_time: session.selectedSlot.time,
+        staff_id: session.selectedStaff || "none",
+      },
+    });
+
+    return paymentLink.url;
+  } catch (error) {
+    log("Stripe payment link creation error:", error);
+    return null;
+  }
+}
+
+function waPaymentRequired(session, paymentUrl, service) {
+  const amount = service.price || 0;
+  const currency = service.currency || "INR";
+
+  return {
+    type: "text",
+    text: {
+      body:
+        `💳 ${t(session, "paymentRequired")}\n\n` +
+        `${t(session, "service")}: ${service.name}\n` +
+        `${t(session, "amount")}: ${currency} ${amount}\n` +
+        `${t(session, "date")}: ${session.selectedDate.label}\n` +
+        `${t(session, "time")}: ${session.selectedSlot.time}\n\n` +
+        `${t(session, "paymentLink")}: ${paymentUrl}\n\n` +
+        `${t(session, "paymentInstructions")}`,
+    },
+  };
+}
+
+function waPaymentPending(session) {
+  return {
+    type: "text",
+    text: {
+      body: t(session, "paymentPending"),
+    },
+  };
+}
+
 // ---------------------
 // Webhook verification
 // ---------------------
@@ -888,205 +965,62 @@ app.post("/webhook", async (req, res) => {
       }
       session.customerPhone = phone;
 
-      // --- Build Zoho appointment form-data ---
-      const formData = new FormData();
-      formData.append("service_id", session.selectedService.id);
+      // Check if service requires payment
+      const service = session.selectedService;
+      const requiresPayment = service.price && service.price > 0;
 
-      const stype = (session.selectedService.service_type || "").toUpperCase();
-      let bookingType = "";
+      if (requiresPayment) {
+        // Create Stripe payment link
+        const paymentUrl = await createStripePaymentLink(session, service);
 
-      if (
-        (stype === "APPOINTMENT" ||
-          stype === "ONE-ON-ONE" ||
-          stype === "ONE TO ONE") &&
-        Array.isArray(session.selectedService.assigned_staffs) &&
-        session.selectedService.assigned_staffs.length > 0
-      ) {
-        const staffId =
-          session.selectedStaff || session.selectedService.assigned_staffs?.[0];
-        if (staffId) {
-          formData.append("staff_id", staffId);
-          bookingType = "staff";
+        if (!paymentUrl) {
+          await sendWhatsApp(from, waError(session, "paymentLinkFailed"));
+          clearSession(from);
+          return res.sendStatus(200);
         }
-      }
 
-      if (
-        stype === "GROUP" ||
-        stype === "GROUP BOOKING" ||
-        stype === "COLLECTIVE"
-      ) {
-        let groupId = session.selectedGroup;
-        if (
-          !groupId &&
-          Array.isArray(session.selectedService.assigned_groups)
-        ) {
-          const firstGroup = session.selectedService.assigned_groups[0];
-          groupId = typeof firstGroup === "object" ? firstGroup.id : firstGroup;
-        }
-        if (groupId) {
-          formData.append("group_id", groupId);
-          bookingType = "group";
-        }
-      }
+        // Store payment URL and mark as awaiting payment
+        session.paymentUrl = paymentUrl;
+        session.step = "AWAIT_PAYMENT";
 
-      if (
-        stype === "RESOURCE" &&
-        Array.isArray(session.selectedService.assigned_resources) &&
-        session.selectedService.assigned_resources.length > 0
-      ) {
-        formData.append(
-          "resource_id",
-          session.selectedService.assigned_resources[0]
+        await sendWhatsApp(
+          from,
+          waPaymentRequired(session, paymentUrl, service)
         );
-        bookingType = "resource";
-      }
-
-      const dateLabel = session.selectedDate.label;
-      const slotTime = session.selectedSlot.time;
-
-      // Parse time - handle both "14:00" and "02:00 PM" formats
-      let hour, minute;
-      const timeMatch = slotTime.match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
-
-      if (!timeMatch) {
-        log("Invalid time format:", slotTime);
-        await sendWhatsApp(from, waError(session, "bookingFailed"));
-        clearSession(from);
         return res.sendStatus(200);
       }
 
-      hour = parseInt(timeMatch[1], 10);
-      minute = timeMatch[2];
-      const ampm = timeMatch[3]?.toUpperCase();
+      // If no payment required, proceed with direct booking
+      await createZohoAppointment(session, from);
+      return res.sendStatus(200);
+    }
 
-      // Convert to 24-hour format if AM/PM is present
-      if (ampm) {
-        if (ampm === "PM" && hour < 12) hour += 12;
-        if (ampm === "AM" && hour === 12) hour = 0;
-      }
+    // ===========================
+    // 12. PAYMENT CONFIRMATION CHECK
+    // ===========================
+    if (session.step === "AWAIT_PAYMENT" && msg.type === "text") {
+      const userText = msg.text.body.trim().toLowerCase();
 
-      hour = hour.toString().padStart(2, "0");
-      const fromTimeStr = `${dateLabel} ${hour}:${minute}:00`;
-
-      // Calculate end time
-      let duration = 30;
-      if (session.selectedService.duration) {
-        const match = session.selectedService.duration.match(/(\d+)/);
-        if (match) duration = parseInt(match[1], 10);
-      }
-
-      // Create proper Date object for IST timezone
-      const [day, month, year] = dateLabel.split("-");
-      const monthIndex = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ].indexOf(month);
-      const fromDateObj = new Date(
-        year,
-        monthIndex,
-        parseInt(day),
-        parseInt(hour),
-        parseInt(minute),
-        0
-      );
-
-      const toDateObj = new Date(fromDateObj.getTime() + duration * 60000);
-      const toHour = toDateObj.getHours().toString().padStart(2, "0");
-      const toMinute = toDateObj.getMinutes().toString().padStart(2, "0");
-      const toDay = toDateObj.getDate().toString().padStart(2, "0");
-      const toMonthName = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ][toDateObj.getMonth()];
-      const toYear = toDateObj.getFullYear();
-      const toTimeStr = `${toDay}-${toMonthName}-${toYear} ${toHour}:${toMinute}:00`;
-
-      formData.append("from_time", fromTimeStr);
-      formData.append("to_time", toTimeStr);
-      formData.append("timezone", "Asia/Kolkata");
-      formData.append("notes", "Booked via WhatsApp");
-      formData.append(
-        "customer_details",
-        JSON.stringify({
-          name: session.customerName,
-          email: session.customerEmail,
-          phone_number: session.customerPhone,
-        })
-      );
-
-      log("Zoho Booking Params", {
-        service_id: session.selectedService.id,
-        bookingType,
-        staff_id: session.selectedStaff,
-        from_time: fromTimeStr,
-        to_time: toTimeStr,
-        timezone: "Asia/Kolkata",
-        customer_details: {
-          name: session.customerName,
-          email: session.customerEmail,
-          phone_number: session.customerPhone,
-        },
-        notes: "Booked via WhatsApp",
-      });
-
-      const zohoToken = await getSessionZohoToken(session);
-      const zohoResp = await fetch(`${ZOHO_BASE}/appointment`, {
-        method: "POST",
-        headers: {
-          Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        },
-        body: formData,
-      });
-      const zohoText = await zohoResp.text();
-      let zohoData;
-      try {
-        zohoData = JSON.parse(zohoText.trim());
-      } catch (err) {
-        log("Zoho JSON.parse ERROR", err.message, "Raw Text:", zohoText);
-        zohoData = {};
-      }
-      log("Zoho appointment", zohoResp.status, JSON.stringify(zohoData));
-
+      // Check if user is asking about payment status
       if (
-        zohoData?.response?.status === "success" &&
-        zohoData.response.returnvalue?.status === "upcoming"
+        userText.includes("paid") ||
+        userText.includes("completed") ||
+        userText.includes("done")
       ) {
-        const appt = zohoData.response.returnvalue;
-        await sendWhatsApp(
-          from,
-          waConfirmation(session, {
-            service: appt.service_name || session.selectedService.name,
-            date: appt.start_time || session.selectedDate.label,
-            time: appt.duration || session.selectedSlot.time,
-            ref: appt.booking_id || appt.id || "N/A",
-            url: appt.summary_url || appt.appointment_url || "",
-          })
-        );
-        clearSession(from);
-      } else {
-        await sendWhatsApp(from, waError(session, "bookingFailed"));
-        clearSession(from);
+        // Verify payment status with Stripe
+        const paymentVerified = await verifyStripePayment(session);
+
+        if (paymentVerified) {
+          await createZohoAppointment(session, from);
+          return res.sendStatus(200);
+        } else {
+          await sendWhatsApp(from, waPaymentPending(session));
+          return res.sendStatus(200);
+        }
       }
+
+      // If user sends any other message, remind them about payment
+      await sendWhatsApp(from, waPaymentPending(session));
       return res.sendStatus(200);
     }
 
@@ -1111,3 +1045,233 @@ app.get("/debug/session/:id", (req, res) => {
 
 // --- Start server ---
 app.listen(PORT, () => log(`🚀 Webhook running on port ${PORT}`));
+
+async function verifyStripePayment(session) {
+  try {
+    // Search for successful payments matching this session
+    const payments = await stripe.checkout.sessions.list({
+      limit: 10,
+    });
+
+    for (const payment of payments.data) {
+      if (
+        payment.metadata?.session_id === session.id &&
+        payment.payment_status === "paid"
+      ) {
+        session.stripePaymentId = payment.id;
+        session.stripePaymentIntentId = payment.payment_intent;
+        return true;
+      }
+    }
+
+    return false;
+  } catch (error) {
+    log("Stripe payment verification error:", error);
+    return false;
+  }
+}
+
+async function createZohoAppointment(session, userPhone) {
+  const formData = new FormData();
+  formData.append("service_id", session.selectedService.id);
+
+  const stype = (session.selectedService.service_type || "").toUpperCase();
+  let bookingType = "";
+
+  if (
+    (stype === "APPOINTMENT" ||
+      stype === "ONE-ON-ONE" ||
+      stype === "ONE TO ONE") &&
+    Array.isArray(session.selectedService.assigned_staffs) &&
+    session.selectedService.assigned_staffs.length > 0
+  ) {
+    const staffId =
+      session.selectedStaff || session.selectedService.assigned_staffs?.[0];
+    if (staffId) {
+      formData.append("staff_id", staffId);
+      bookingType = "staff";
+    }
+  }
+
+  if (
+    stype === "GROUP" ||
+    stype === "GROUP BOOKING" ||
+    stype === "COLLECTIVE"
+  ) {
+    let groupId = session.selectedGroup;
+    if (!groupId && Array.isArray(session.selectedService.assigned_groups)) {
+      const firstGroup = session.selectedService.assigned_groups[0];
+      groupId = typeof firstGroup === "object" ? firstGroup.id : firstGroup;
+    }
+    if (groupId) {
+      formData.append("group_id", groupId);
+      bookingType = "group";
+    }
+  }
+
+  if (
+    stype === "RESOURCE" &&
+    Array.isArray(session.selectedService.assigned_resources) &&
+    session.selectedService.assigned_resources.length > 0
+  ) {
+    formData.append(
+      "resource_id",
+      session.selectedService.assigned_resources[0]
+    );
+    bookingType = "resource";
+  }
+
+  const dateLabel = session.selectedDate.label;
+  const slotTime = session.selectedSlot.time;
+
+  // Parse time - handle both "14:00" and "02:00 PM" formats
+  let hour, minute;
+  const timeMatch = slotTime.match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+
+  if (!timeMatch) {
+    log("Invalid time format:", slotTime);
+    await sendWhatsApp(userPhone, waError(session, "bookingFailed"));
+    clearSession(userPhone);
+    return;
+  }
+
+  hour = parseInt(timeMatch[1], 10);
+  minute = timeMatch[2];
+  const ampm = timeMatch[3]?.toUpperCase();
+
+  // Convert to 24-hour format if AM/PM is present
+  if (ampm) {
+    if (ampm === "PM" && hour < 12) hour += 12;
+    if (ampm === "AM" && hour === 12) hour = 0;
+  }
+
+  hour = hour.toString().padStart(2, "0");
+  const fromTimeStr = `${dateLabel} ${hour}:${minute}:00`;
+
+  // Calculate end time
+  let duration = 30;
+  if (session.selectedService.duration) {
+    const match = session.selectedService.duration.match(/(\d+)/);
+    if (match) duration = parseInt(match[1], 10);
+  }
+
+  // Create proper Date object for IST timezone
+  const [day, month, year] = dateLabel.split("-");
+  const monthIndex = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ].indexOf(month);
+  const fromDateObj = new Date(
+    year,
+    monthIndex,
+    parseInt(day),
+    parseInt(hour),
+    parseInt(minute),
+    0
+  );
+
+  const toDateObj = new Date(fromDateObj.getTime() + duration * 60000);
+  const toHour = toDateObj.getHours().toString().padStart(2, "0");
+  const toMinute = toDateObj.getMinutes().toString().padStart(2, "0");
+  const toDay = toDateObj.getDate().toString().padStart(2, "0");
+  const toMonthName = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ][toDateObj.getMonth()];
+  const toYear = toDateObj.getFullYear();
+  const toTimeStr = `${toDay}-${toMonthName}-${toYear} ${toHour}:${toMinute}:00`;
+
+  formData.append("from_time", fromTimeStr);
+  formData.append("to_time", toTimeStr);
+  formData.append("timezone", "Asia/Kolkata");
+
+  let notes = "Booked via WhatsApp";
+  if (session.stripePaymentId) {
+    notes += ` | Payment ID: ${session.stripePaymentId}`;
+  }
+  formData.append("notes", notes);
+
+  formData.append(
+    "customer_details",
+    JSON.stringify({
+      name: session.customerName,
+      email: session.customerEmail,
+      phone_number: session.customerPhone,
+    })
+  );
+
+  log("Zoho Booking Params", {
+    service_id: session.selectedService.id,
+    bookingType,
+    staff_id: session.selectedStaff,
+    from_time: fromTimeStr,
+    to_time: toTimeStr,
+    timezone: "Asia/Kolkata",
+    customer_details: {
+      name: session.customerName,
+      email: session.customerEmail,
+      phone_number: session.customerPhone,
+    },
+    payment_id: session.stripePaymentId || "none",
+    notes,
+  });
+
+  const zohoToken = await getSessionZohoToken(session);
+  const zohoResp = await fetch(`${ZOHO_BASE}/appointment`, {
+    method: "POST",
+    headers: {
+      Authorization: `Zoho-oauthtoken ${zohoToken}`,
+    },
+    body: formData,
+  });
+  const zohoText = await zohoResp.text();
+  let zohoData;
+  try {
+    zohoData = JSON.parse(zohoText.trim());
+  } catch (err) {
+    log("Zoho JSON.parse ERROR", err.message, "Raw Text:", zohoText);
+    zohoData = {};
+  }
+  log("Zoho appointment", zohoResp.status, JSON.stringify(zohoData));
+
+  if (
+    zohoData?.response?.status === "success" &&
+    zohoData.response.returnvalue?.status === "upcoming"
+  ) {
+    const appt = zohoData.response.returnvalue;
+    await sendWhatsApp(
+      userPhone,
+      waConfirmation(session, {
+        service: appt.service_name || session.selectedService.name,
+        date: appt.start_time || session.selectedDate.label,
+        time: appt.duration || session.selectedSlot.time,
+        ref: appt.booking_id || appt.id || "N/A",
+        url: appt.summary_url || appt.appointment_url || "",
+      })
+    );
+    clearSession(userPhone);
+  } else {
+    await sendWhatsApp(userPhone, waError(session, "bookingFailed"));
+    clearSession(userPhone);
+  }
+}
