@@ -555,9 +555,15 @@ function waSearchingMessage(session) {
 
 // Add payment-related functions
 async function createStripePaymentLink(session, service) {
+  if (!stripe) {
+    log("Stripe not configured, skipping payment");
+    return null;
+  }
+
   try {
     const priceInCents = Math.round(service.price * 100); // Convert to cents
 
+    // INDIA EXPORT COMPLIANCE: Collect billing address
     const paymentLink = await stripe.paymentLinks.create({
       line_items: [
         {
@@ -565,13 +571,21 @@ async function createStripePaymentLink(session, service) {
             currency: service.currency?.toLowerCase() || "inr",
             product_data: {
               name: service.name,
-              description: `Appointment on ${session.selectedDate.label} at ${session.selectedSlot.time}`,
+              description: `Appointment booking - ${service.name} on ${session.selectedDate.label} at ${session.selectedSlot.time}`, // Required for India export
             },
             unit_amount: priceInCents,
           },
           quantity: 1,
         },
       ],
+      // REQUIRED: Collect billing address for India export compliance
+      billing_address_collection: "required",
+
+      // REQUIRED: Collect shipping address if selling physical goods
+      // shipping_address_collection: {
+      //   allowed_countries: [], // Leave empty to allow all countries except India
+      // },
+
       after_completion: {
         type: "redirect",
         redirect: {
@@ -583,10 +597,20 @@ async function createStripePaymentLink(session, service) {
       metadata: {
         session_id: session.id,
         user_phone: session.customerPhone,
+        customer_name: session.customerName, // Required for RBI reporting
+        customer_email: session.customerEmail, // Required for RBI reporting
         service_id: service.id,
         slot_date: session.selectedDate.label,
         slot_time: session.selectedSlot.time,
         staff_id: session.selectedStaff || "none",
+        export_type: "services", // Required: "services" or "goods"
+      },
+      // Add custom text for compliance
+      custom_text: {
+        submit: {
+          message:
+            "Note: International cards only. Indian cards will be declined for regulatory compliance.",
+        },
       },
     });
 
@@ -610,6 +634,7 @@ function waPaymentRequired(session, paymentUrl, service) {
         `${t(session, "amount")}: ${currency} ${amount}\n` +
         `${t(session, "date")}: ${session.selectedDate.label}\n` +
         `${t(session, "time")}: ${session.selectedSlot.time}\n\n` +
+        `⚠️ ${t(session, "internationalCardsOnly")}\n\n` + // NEW
         `${t(session, "paymentLink")}: ${paymentUrl}\n\n` +
         `${t(session, "paymentInstructions")}`,
     },
@@ -1047,6 +1072,11 @@ app.get("/debug/session/:id", (req, res) => {
 app.listen(PORT, () => log(`🚀 Webhook running on port ${PORT}`));
 
 async function verifyStripePayment(session) {
+  if (!stripe) {
+    log("Stripe not configured");
+    return false;
+  }
+
   try {
     // Search for successful payments matching this session
     const payments = await stripe.checkout.sessions.list({
@@ -1058,8 +1088,29 @@ async function verifyStripePayment(session) {
         payment.metadata?.session_id === session.id &&
         payment.payment_status === "paid"
       ) {
+        // INDIA EXPORT COMPLIANCE: Verify non-Indian billing address
+        const customerDetails = payment.customer_details;
+        const billingAddress = customerDetails?.address;
+
+        if (billingAddress?.country === "IN") {
+          log(
+            "Payment declined: Indian billing address not allowed for export"
+          );
+          return false;
+        }
+
+        // Store payment details
         session.stripePaymentId = payment.id;
         session.stripePaymentIntentId = payment.payment_intent;
+        session.customerBillingCountry = billingAddress?.country;
+
+        log("Export payment verified:", {
+          payment_id: payment.id,
+          customer_country: billingAddress?.country,
+          amount: payment.amount_total / 100,
+          currency: payment.currency,
+        });
+
         return true;
       }
     }
@@ -1208,6 +1259,7 @@ async function createZohoAppointment(session, userPhone) {
   let notes = "Booked via WhatsApp";
   if (session.stripePaymentId) {
     notes += ` | Payment ID: ${session.stripePaymentId}`;
+    notes += ` | Export: ${session.customerBillingCountry || "Unknown"}`; // Track export country
   }
   formData.append("notes", notes);
 
