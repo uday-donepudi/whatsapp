@@ -80,13 +80,58 @@ function clearSession(user) {
 }
 
 function validateEmail(email) {
-  // RFC5322-lite
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  // Trim and convert to lowercase
+  email = email.trim().toLowerCase();
+
+  // RFC5322-lite with stricter rules
+  const emailRegex = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+
+  if (!emailRegex.test(email)) {
+    return false;
+  }
+
+  // Additional checks
+  const [localPart, domain] = email.split("@");
+
+  // Local part (before @) should be 1-64 characters
+  if (!localPart || localPart.length > 64) {
+    return false;
+  }
+
+  // Domain should have at least one dot
+  if (!domain || !domain.includes(".")) {
+    return false;
+  }
+
+  // Domain should not start or end with dot or hyphen
+  if (
+    domain.startsWith(".") ||
+    domain.endsWith(".") ||
+    domain.startsWith("-") ||
+    domain.endsWith("-")
+  ) {
+    return false;
+  }
+
+  // Top-level domain should be at least 2 characters
+  const tld = domain.split(".").pop();
+  if (!tld || tld.length < 2) {
+    return false;
+  }
+
+  return true;
 }
 
 function validatePhone(phone) {
   const digits = phone.replace(/\D/g, "");
-  return digits.length >= 7 && digits.length <= 15;
+
+  // Phone number must be exactly 10 digits
+  if (digits.length !== 10) {
+    return false;
+  }
+
+  // Must start with 6, 7, 8, or 9 (valid Indian mobile prefixes)
+  return /^[6-9]\d{9}$/.test(digits);
 }
 
 function formatDate(date) {
@@ -458,6 +503,7 @@ async function findNextAvailableSlots(
   let currentDate = new Date(startDate);
   const endDate = new Date(startDate);
   endDate.setDate(endDate.getDate() + maxDaysToScan);
+  let slotCounter = 0; // Add counter for uniqueness
 
   while (slots.length < limit && currentDate <= endDate) {
     const dateStr = formatDateForZoho(currentDate);
@@ -474,8 +520,16 @@ async function findNextAvailableSlots(
     if (Array.isArray(availableSlots) && availableSlots.length > 0) {
       for (const timeSlot of availableSlots) {
         if (slots.length >= limit) break;
+
+        // Use counter + timestamp for guaranteed uniqueness
+        const uniqueId = `slot_${slotCounter}_${dateStr}_${timeSlot.replace(
+          /[:\s]/g,
+          "-"
+        )}`;
+        slotCounter++;
+
         slots.push({
-          id: `slot_${dateStr}_${timeSlot.replace(/:/g, "-")}`,
+          id: uniqueId,
           label: `${dateStr} ${timeSlot}`,
           date: dateStr,
           time: timeSlot,
@@ -602,16 +656,26 @@ function waPaymentRequired(session, paymentUrl, service) {
   const currency = service.currency || "INR";
 
   return {
-    type: "text",
-    text: {
-      body:
-        `💳 ${t(session, "paymentRequired")}\n\n` +
-        `${t(session, "service")}: ${service.name}\n` +
-        `${t(session, "amount")}: ${currency} ${amount}\n` +
-        `${t(session, "date")}: ${session.selectedDate.label}\n` +
-        `${t(session, "time")}: ${session.selectedSlot.time}\n\n` +
-        `${t(session, "paymentLink")}: ${paymentUrl}\n\n` +
-        `${t(session, "paymentInstructions")}`,
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text:
+          `💳 ${t(session, "paymentRequired")}\n\n` +
+          `${t(session, "service")}: ${service.name}\n` +
+          `${t(session, "amount")}: ${currency} ${amount}\n` +
+          `${t(session, "date")}: ${session.selectedDate.label}\n` +
+          `${t(session, "time")}: ${session.selectedSlot.time}\n\n` +
+          `${t(session, "paymentLink")}: ${paymentUrl}`,
+      },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "payment_done", title: t(session, "paid") },
+          },
+        ],
+      },
     },
   };
 }
@@ -883,18 +947,23 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // User selected a specific slot
-      const [, dateStr, timeStr] = slotId.match(/slot_(.+?)_(.+)/) || [];
-      if (!dateStr || !timeStr) {
+      // User selected a specific slot - UPDATED PARSING
+      // Parse: slot_0_16-Oct-2025_10-15-AM or slot_1_16-Oct-2025_02-30-PM
+      const parts = slotId.split("_");
+      if (parts.length < 4) {
         await sendWhatsApp(from, waError(session, "invalidSlot"));
         return res.sendStatus(200);
       }
 
+      // Extract: [slot, counter, date, time...]
+      const dateStr = parts[2]; // "16-Oct-2025"
+      const timeParts = parts.slice(3).join(" ").replace(/-/g, ":"); // "10:15 AM"
+
       session.selectedSlot = {
         id: slotId,
-        label: timeStr.replace(/-/g, ":"),
+        label: timeParts,
         date: dateStr,
-        time: timeStr.replace(/-/g, ":"),
+        time: timeParts,
       };
       session.selectedDate = { label: dateStr };
 
@@ -998,14 +1067,11 @@ app.post("/webhook", async (req, res) => {
     // ===========================
     // 12. PAYMENT CONFIRMATION CHECK
     // ===========================
-    if (session.step === "AWAIT_PAYMENT" && msg.type === "text") {
-      const userText = msg.text.body.trim().toLowerCase();
-
-      // Check if user is asking about payment status
+    if (session.step === "AWAIT_PAYMENT") {
+      // Handle "Paid" button click
       if (
-        userText.includes("paid") ||
-        userText.includes("completed") ||
-        userText.includes("done")
+        msg.type === "interactive" &&
+        msg.interactive.button_reply?.id === "payment_done"
       ) {
         // Verify payment status with Stripe
         const paymentVerified = await verifyStripePayment(session);
@@ -1019,9 +1085,32 @@ app.post("/webhook", async (req, res) => {
         }
       }
 
-      // If user sends any other message, remind them about payment
-      await sendWhatsApp(from, waPaymentPending(session));
-      return res.sendStatus(200);
+      // Handle text input (backward compatibility)
+      if (msg.type === "text") {
+        const userText = msg.text.body.trim().toLowerCase();
+
+        // Check if user is asking about payment status
+        if (
+          userText.includes("paid") ||
+          userText.includes("completed") ||
+          userText.includes("done")
+        ) {
+          // Verify payment status with Stripe
+          const paymentVerified = await verifyStripePayment(session);
+
+          if (paymentVerified) {
+            await createZohoAppointment(session, from);
+            return res.sendStatus(200);
+          } else {
+            await sendWhatsApp(from, waPaymentPending(session));
+            return res.sendStatus(200);
+          }
+        }
+
+        // If user sends any other message, remind them about payment
+        await sendWhatsApp(from, waPaymentPending(session));
+        return res.sendStatus(200);
+      }
     }
 
     // ===========================

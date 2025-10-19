@@ -60,5 +60,6 @@
   "paymentLinkFailed": "Unable to create payment link. Please try again or contact support.",
   "internationalCardsOnly": "⚠️ Only international cards accepted. Indian cards will be declined due to export regulations.",
   "paymentDeclinedIndianCard": "Payment declined. Please use an international card with a non-Indian billing address.",
-  "exportCompliance": "Note: Billing address must be outside India for regulatory compliance."
+  "exportCompliance": "Note: Billing address must be outside India for regulatory compliance.",
+  "paid": "✅ Paid"
 }
