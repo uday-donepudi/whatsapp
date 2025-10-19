@@ -1300,6 +1300,15 @@ async function createZohoAppointment(session, userPhone) {
   }
   formData.append("notes", notes);
 
+  // --- ADD PAYMENT INFO FOR ZOHO ---
+  const paidAmount =
+    session.stripePaymentAmount ??
+    session.paidAmount ??
+    (session.stripePaymentId ? session.selectedService?.price ?? 0 : 0);
+
+  formData.append("payment_info", JSON.stringify({ cost_paid: Number(paidAmount || 0).toFixed(2) }));
+  // --- END PAYMENT INFO ---
+
   formData.append(
     "customer_details",
     JSON.stringify({
