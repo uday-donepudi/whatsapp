@@ -609,38 +609,42 @@ function waSearchingMessage(session) {
 
 // Add payment-related functions
 async function createStripePaymentLink(session, service) {
+  if (!stripe) {
+    log("Stripe not configured, skipping payment");
+    return null;
+  }
+
   try {
-    const priceInCents = Math.round(service.price * 100); // Convert to cents
+    const amountInPaise = Math.round((service.price || 0) * 100);
 
     const paymentLink = await stripe.paymentLinks.create({
       line_items: [
         {
           price_data: {
-            currency: service.currency?.toLowerCase() || "inr",
+            currency: (service.currency || "INR").toLowerCase(),
             product_data: {
               name: service.name,
-              description: `Appointment on ${session.selectedDate.label} at ${session.selectedSlot.time}`,
+              description: `Appointment - ${service.name} on ${session.selectedDate?.label} at ${session.selectedSlot?.time}`,
             },
-            unit_amount: priceInCents,
+            unit_amount: amountInPaise,
           },
           quantity: 1,
         },
       ],
+      billing_address_collection: "required",
+      metadata: {
+        session_id: session.id,
+        service_id: service.id,
+        customer_name: session.customerName || "",
+        customer_email: session.customerEmail || "",
+      },
       after_completion: {
         type: "redirect",
         redirect: {
           url: `${
-            process.env.BASE_URL || "https://yourdomain.com"
+            process.env.BASE_URL || "https://example.com"
           }/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         },
-      },
-      metadata: {
-        session_id: session.id,
-        user_phone: session.customerPhone,
-        service_id: service.id,
-        slot_date: session.selectedDate.label,
-        slot_time: session.selectedSlot.time,
-        staff_id: session.selectedStaff || "none",
       },
     });
 
@@ -782,8 +786,14 @@ app.post("/webhook", async (req, res) => {
       }
 
       if (btnId === "help_btn") {
-        session.step = "AWAIT_HELP";
-        await sendWhatsApp(from, waHelpMenu(session));
+        // Start guided help flow: ask for name -> email -> multi-line message -> create Zoho Desk ticket
+        session.step = "AWAIT_HELP_NAME";
+        await sendWhatsApp(from, {
+          type: "text",
+          text: {
+            body: "Please enter your full name to create a support ticket:",
+          },
+        });
         return res.sendStatus(200);
       }
 
@@ -1114,6 +1124,71 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
+    // HELP FLOW: collect name, email, message -> create Zoho Desk ticket
+    // ===========================
+    if (session.step === "AWAIT_HELP_NAME" && msg.type === "text") {
+      session.helpName = msg.text.body.trim();
+      session.step = "AWAIT_HELP_EMAIL";
+      await sendWhatsApp(from, {
+        type: "text",
+        text: { body: "Please enter your email address:" },
+      });
+      return res.sendStatus(200);
+    }
+
+    if (session.step === "AWAIT_HELP_EMAIL" && msg.type === "text") {
+      const email = msg.text.body.trim();
+      if (!validateEmail(email)) {
+        session.emailAttempts = (session.emailAttempts || 0) + 1;
+        if (session.emailAttempts >= 3) {
+          await sendWhatsApp(from, waError(session, "bookingCancelled"));
+          clearSession(from);
+          return res.sendStatus(200);
+        }
+        await sendWhatsApp(from, {
+          type: "text",
+          text: { body: "Invalid email. Please enter a valid email address:" },
+        });
+        return res.sendStatus(200);
+      }
+      session.helpEmail = email;
+      session.step = "AWAIT_HELP_MESSAGE";
+      await sendWhatsApp(from, {
+        type: "text",
+        text: {
+          body: "Please type your message (you can send multiple lines). When done, send the message and we'll create a support ticket.",
+        },
+      });
+      return res.sendStatus(200);
+    }
+
+    if (session.step === "AWAIT_HELP_MESSAGE" && msg.type === "text") {
+      session.helpMessage = msg.text.body.trim();
+
+      // Create Zoho Desk ticket
+      const ticketResult = await createZohoDeskTicket(session);
+
+      if (ticketResult?.id) {
+        await sendWhatsApp(from, {
+          type: "text",
+          text: {
+            body: `✅ Support request submitted. Ticket ID: ${ticketResult.id}\nOur team will contact you at ${session.helpEmail}.`,
+          },
+        });
+      } else {
+        await sendWhatsApp(from, {
+          type: "text",
+          text: {
+            body: "❌ Failed to create support ticket. Please try again later or contact support.",
+          },
+        });
+      }
+
+      clearSession(from);
+      return res.sendStatus(200);
+    }
+
+    // ===========================
     // FALLBACK
     // ===========================
     session.step = "AWAIT_MAIN";
@@ -1306,7 +1381,10 @@ async function createZohoAppointment(session, userPhone) {
     session.paidAmount ??
     (session.stripePaymentId ? session.selectedService?.price ?? 0 : 0);
 
-  formData.append("payment_info", JSON.stringify({ cost_paid: Number(paidAmount || 0).toFixed(2) }));
+  formData.append(
+    "payment_info",
+    JSON.stringify({ cost_paid: Number(paidAmount || 0).toFixed(2) })
+  );
   // --- END PAYMENT INFO ---
 
   formData.append(
@@ -1371,5 +1449,58 @@ async function createZohoAppointment(session, userPhone) {
   } else {
     await sendWhatsApp(userPhone, waError(session, "bookingFailed"));
     clearSession(userPhone);
+  }
+}
+
+// Create a Zoho Desk ticket using session.helpName, session.helpEmail, session.helpMessage
+async function createZohoDeskTicket(session) {
+  try {
+    const orgId = process.env.ZOHO_DESK_ORGID; // optional
+    const deptId = process.env.ZOHO_DESK_DEPT_ID; // optional
+
+    // Use the same session-based Zoho token as bookings
+    const zohoToken = await getSessionZohoToken(session);
+
+    const body = {
+      subject: `WhatsApp Support: ${
+        session.selectedService?.name || "General"
+      }`,
+      status: "Open",
+      contact: {
+        firstName: session.helpName.split(" ")[0] || session.helpName,
+        lastName:
+          session.helpName.split(" ").slice(1).join(" ") || session.helpName,
+        email: session.helpEmail,
+      },
+      description: session.helpMessage,
+    };
+
+    if (deptId) body.departmentId = deptId;
+
+    const resp = await fetch("https://desk.zoho.in/api/v1/tickets", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Zoho-oauthtoken ${zohoToken}`,
+        ...(orgId ? { orgId } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const text = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { parseError: true, raw: text };
+    }
+    log("Zoho Desk create ticket", resp.status, JSON.stringify(data));
+    if (resp.status >= 200 && resp.status < 300) {
+      return data;
+    }
+    return null;
+  } catch (err) {
+    log("Zoho Desk ticket error", err);
+    return null;
   }
 }
