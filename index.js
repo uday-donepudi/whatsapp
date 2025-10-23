@@ -838,6 +838,7 @@ app.post("/webhook", async (req, res) => {
           session.language
         );
         log("Email prompt text:", t(session, "enterEmailForLookup"));
+        log("prompting for email for reschedule");
         await sendWhatsApp(from, waTextPrompt(session, "enterEmailForLookup"));
         return res.sendStatus(200);
       }
