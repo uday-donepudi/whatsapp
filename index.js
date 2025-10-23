@@ -272,7 +272,7 @@ function waMainMenu(session) {
         buttons: [
           {
             type: "reply",
-            reply: { id: "book_btn", title: t(session, "book") },
+            reply: { id: "my_bookings_btn", title: t(session, "myBookings") },
           },
           {
             type: "reply",
@@ -800,6 +800,41 @@ app.post("/webhook", async (req, res) => {
       if (btnId === "support_btn") {
         session.step = "AWAIT_SUPPORT";
         await sendWhatsApp(from, waSupportMenu(session));
+        return res.sendStatus(200);
+      }
+
+      if (btnId === "my_bookings_btn") {
+        session.step = "AWAIT_BOOKING_MENU";
+        await sendWhatsApp(from, waMyBookingsMenu(session));
+        return res.sendStatus(200);
+      }
+
+      // Handle My Bookings menu buttons
+      if (btnId === "book_new_btn") {
+        const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
+        const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
+
+        if (status === 200 && data?.response?.returnvalue?.data?.length) {
+          const services = data.response.returnvalue.data;
+          session.services = services;
+          session.step = "AWAIT_SERVICE";
+          await sendWhatsApp(from, waServiceList(session, services));
+          return res.sendStatus(200);
+        } else {
+          await sendWhatsApp(from, waError(session, "noServices"));
+          return res.sendStatus(200);
+        }
+      }
+
+      if (btnId === "reschedule_btn") {
+        session.step = "AWAIT_RESCHEDULE_EMAIL";
+        await sendWhatsApp(from, waTextPrompt(session, "enterEmailForLookup"));
+        return res.sendStatus(200);
+      }
+
+      if (btnId === "cancel_btn") {
+        session.step = "AWAIT_CANCEL_EMAIL";
+        await sendWhatsApp(from, waTextPrompt(session, "enterEmailForLookup"));
         return res.sendStatus(200);
       }
     }
@@ -1503,4 +1538,174 @@ async function createZohoDeskTicket(session) {
     log("Zoho Desk ticket error", err);
     return null;
   }
+}
+
+async function fetchZohoAppointments(session, email) {
+  try {
+    const zohoToken = await getSessionZohoToken(session);
+    const resp = await fetch(
+      "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Zoho-oauthtoken ${zohoToken}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: `data=${JSON.stringify({ customer_email: email })}`,
+      }
+    );
+
+    const data = await resp.json();
+    log("Zoho fetch appointments", resp.status, JSON.stringify(data));
+
+    if (data?.response?.returnvalue?.response) {
+      return data.response.returnvalue.response.filter(
+        (a) => a.status === "upcoming"
+      );
+    }
+    return [];
+  } catch (err) {
+    log("Zoho fetch appointments error:", err);
+    return [];
+  }
+}
+
+async function rescheduleZohoAppointment(
+  session,
+  booking_id,
+  staff_id,
+  start_time
+) {
+  try {
+    const zohoToken = await getSessionZohoToken(session);
+    const formData = new FormData();
+    formData.append("booking_id", booking_id);
+    formData.append("staff_id", staff_id);
+    formData.append("start_time", start_time);
+
+    const resp = await fetch(
+      "https://www.zohoapis.in/bookings/v1/json/rescheduleappointment",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Zoho-oauthtoken ${zohoToken}`,
+        },
+        body: formData,
+      }
+    );
+
+    const data = await resp.json();
+    log("Zoho reschedule appointment", resp.status, JSON.stringify(data));
+    return data?.response?.status === "success";
+  } catch (err) {
+    log("Zoho reschedule error:", err);
+    return false;
+  }
+}
+
+async function cancelZohoAppointment(session, booking_id) {
+  try {
+    const zohoToken = await getSessionZohoToken(session);
+    const formData = new FormData();
+    formData.append("booking_id", booking_id);
+    formData.append("action", "cancel");
+
+    const resp = await fetch(
+      "https://www.zohoapis.in/bookings/v1/json/updateappointment",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Zoho-oauthtoken ${zohoToken}`,
+        },
+        body: formData,
+      }
+    );
+
+    const data = await resp.json();
+    log("Zoho cancel appointment", resp.status, JSON.stringify(data));
+    return data?.response?.status === "success";
+  } catch (err) {
+    log("Zoho cancel error:", err);
+    return false;
+  }
+}
+
+// After existing wa* helper functions...
+
+function waMyBookingsMenu(session) {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: t(session, "myBookingsMenu") },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "book_new_btn", title: t(session, "bookAppointment") },
+          },
+          {
+            type: "reply",
+            reply: { id: "reschedule_btn", title: t(session, "reschedule") },
+          },
+          {
+            type: "reply",
+            reply: { id: "cancel_btn", title: t(session, "cancel") },
+          },
+        ],
+      },
+    },
+  };
+}
+
+function waAppointmentList(session, appointments, page, purpose) {
+  const start = page * 3;
+  const pageItems = appointments.slice(start, start + 3);
+
+  const rows = pageItems.map((appt) => ({
+    id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
+    title: `${appt.service_name} on ${appt.start_time}`,
+  }));
+
+  if (start + 3 < appointments.length) {
+    rows.push({
+      id: `show_more_appts_${purpose}_${page + 1}`,
+      title: t(session, "showMore"),
+    });
+  }
+
+  return {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: t(session, "selectAppointment") },
+      action: {
+        button: t(session, "chooseAppointment"),
+        sections: [
+          {
+            title: t(session, "appointments"),
+            rows,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function waSuccessMessage(session, messageKey) {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: t(session, messageKey) },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
+        ],
+      },
+    },
+  };
 }
