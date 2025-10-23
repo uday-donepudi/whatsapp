@@ -1770,9 +1770,42 @@ async function createZohoDeskTicket(session) {
   }
 }
 
-async function fetchZohoAppointments(session, email) {
+async function fetchZohoAppointments(
+  session,
+  email,
+  startDate = new Date(),
+  maxAttempts = 5
+) {
   try {
     const zohoToken = await getSessionZohoToken(session);
+
+    // Format date as dd-MMM-yyyy HH:mm:ss
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+
+    const formattedDate = `${String(startDate.getDate()).padStart(2, "0")}-${
+      monthNames[startDate.getMonth()]
+    }-${startDate.getFullYear()} ${String(startDate.getHours()).padStart(
+      2,
+      "0"
+    )}:${String(startDate.getMinutes()).padStart(2, "0")}:${String(
+      startDate.getSeconds()
+    ).padStart(2, "0")}`;
+
+    log("Fetching appointments from date:", formattedDate);
+
     const resp = await fetch(
       "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
       {
@@ -1781,7 +1814,10 @@ async function fetchZohoAppointments(session, email) {
           Authorization: `Zoho-oauthtoken ${zohoToken}`,
           "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: `data=${JSON.stringify({ customer_email: email })}`,
+        body: `data=${JSON.stringify({
+          customer_email: email,
+          from_time: formattedDate, // Add the formatted start date
+        })}`,
       }
     );
 
@@ -1792,12 +1828,36 @@ async function fetchZohoAppointments(session, email) {
       const allAppointments = data.response.returnvalue.response;
       log("All appointments:", JSON.stringify(allAppointments));
 
-      const upcomingAppointments = allAppointments.filter(
-        (a) => a.status === "upcoming"
-      );
+      // Filter for active appointments
+      const activeAppointments = allAppointments.filter((a) => {
+        // Parse appointment date
+        const appointmentDate = new Date(a.customer_booking_start_time);
+        const now = new Date();
 
-      log("Upcoming appointments found:", upcomingAppointments.length);
-      return upcomingAppointments;
+        // Consider active if:
+        // 1. Start time is in the future AND
+        // 2. Status is not "cancel" or "completed"
+        return (
+          appointmentDate > now && !["cancel", "completed"].includes(a.status)
+        );
+      });
+
+      log("Active appointments found:", activeAppointments.length);
+
+      // If we found active appointments, return them
+      if (activeAppointments.length > 0) {
+        return activeAppointments;
+      }
+
+      // If no active appointments and we haven't hit max attempts,
+      // try again with a date 30 days in the future
+      if (maxAttempts > 1) {
+        const nextDate = new Date(startDate);
+        nextDate.setDate(nextDate.getDate() + 30);
+        log("Retrying with new date:", nextDate);
+
+        return fetchZohoAppointments(session, email, nextDate, maxAttempts - 1);
+      }
     }
     return [];
   } catch (err) {
