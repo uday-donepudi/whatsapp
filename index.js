@@ -828,12 +828,30 @@ app.post("/webhook", async (req, res) => {
 
       if (btnId === "reschedule_btn") {
         session.step = "AWAIT_RESCHEDULE_EMAIL";
+        log(
+          "RESCHEDULE pressed - sessionId:",
+          session.id,
+          "from:",
+          from,
+          "lang:",
+          session.language
+        );
+        log("Email prompt text:", t(session, "enterEmailForLookup"));
         await sendWhatsApp(from, waTextPrompt(session, "enterEmailForLookup"));
         return res.sendStatus(200);
       }
 
       if (btnId === "cancel_btn") {
         session.step = "AWAIT_CANCEL_EMAIL";
+        log(
+          "CANCEL pressed - sessionId:",
+          session.id,
+          "from:",
+          from,
+          "lang:",
+          session.language
+        );
+        log("Email prompt text:", t(session, "enterEmailForLookup"));
         await sendWhatsApp(from, waTextPrompt(session, "enterEmailForLookup"));
         return res.sendStatus(200);
       }
