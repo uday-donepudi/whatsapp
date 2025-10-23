@@ -761,7 +761,8 @@ app.post("/webhook", async (req, res) => {
     // 3. HANDLE MAIN MENU BUTTONS
     // ===========================
     if (
-      session.step === "AWAIT_MAIN" &&
+      (session.step === "AWAIT_MAIN" ||
+        session.step === "AWAIT_BOOKING_MENU") &&
       msg.type === "interactive" &&
       msg.interactive.button_reply
     ) {
