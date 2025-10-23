@@ -1223,14 +1223,268 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
+    // Add these handlers AFTER the "HELP FLOW" section and BEFORE the "FALLBACK" section
+
+    // ===========================
+    // RESCHEDULE FLOW: Email Input
+    // ===========================
+    if (session.step === "AWAIT_RESCHEDULE_EMAIL" && msg.type === "text") {
+      const email = msg.text.body.trim();
+      if (!validateEmail(email)) {
+        session.emailAttempts = (session.emailAttempts || 0) + 1;
+        if (session.emailAttempts >= 3) {
+          await sendWhatsApp(from, waError(session, "bookingCancelled"));
+          clearSession(from);
+          return res.sendStatus(200);
+        }
+        await sendWhatsApp(from, waTextPrompt(session, "invalidEmail"));
+        return res.sendStatus(200);
+      }
+
+      const appointments = await fetchZohoAppointments(session, email);
+      if (!appointments.length) {
+        await sendWhatsApp(from, waError(session, "noAppointmentsFound"));
+        session.step = "AWAIT_MAIN";
+        return res.sendStatus(200);
+      }
+
+      session.appointments = appointments;
+      session.appointmentPage = 0;
+      session.step = "AWAIT_APPOINTMENT_LIST_RESCHEDULE";
+      await sendWhatsApp(
+        from,
+        waAppointmentList(session, appointments, 0, "reschedule")
+      );
+      return res.sendStatus(200);
+    }
+
+    // ===========================
+    // CANCEL FLOW: Email Input
+    // ===========================
+    if (session.step === "AWAIT_CANCEL_EMAIL" && msg.type === "text") {
+      const email = msg.text.body.trim();
+      if (!validateEmail(email)) {
+        session.emailAttempts = (session.emailAttempts || 0) + 1;
+        if (session.emailAttempts >= 3) {
+          await sendWhatsApp(from, waError(session, "bookingCancelled"));
+          clearSession(from);
+          return res.sendStatus(200);
+        }
+        await sendWhatsApp(from, waTextPrompt(session, "invalidEmail"));
+        return res.sendStatus(200);
+      }
+
+      const appointments = await fetchZohoAppointments(session, email);
+      if (!appointments.length) {
+        await sendWhatsApp(from, waError(session, "noAppointmentsFound"));
+        session.step = "AWAIT_MAIN";
+        return res.sendStatus(200);
+      }
+
+      session.appointments = appointments;
+      session.appointmentPage = 0;
+      session.step = "AWAIT_APPOINTMENT_LIST_CANCEL";
+      await sendWhatsApp(
+        from,
+        waAppointmentList(session, appointments, 0, "cancel")
+      );
+      return res.sendStatus(200);
+    }
+
+    // ===========================
+    // APPOINTMENT SELECTION (for reschedule/cancel)
+    // ===========================
+    if (
+      (session.step === "AWAIT_APPOINTMENT_LIST_RESCHEDULE" ||
+        session.step === "AWAIT_APPOINTMENT_LIST_CANCEL") &&
+      msg.type === "interactive" &&
+      msg.interactive.list_reply
+    ) {
+      const replyId = msg.interactive.list_reply.id;
+
+      // Handle "Show More" pagination
+      if (replyId.startsWith("show_more_appts_")) {
+        const parts = replyId.split("_");
+        const purpose = parts[3];
+        const page = parseInt(parts[4]);
+        session.appointmentPage = page;
+        await sendWhatsApp(
+          from,
+          waAppointmentList(session, session.appointments, page, purpose)
+        );
+        return res.sendStatus(200);
+      }
+
+      // Handle appointment selection
+      // Format: reschedule_appt_HE-00052_333192000000042016_333192000000042017
+      const parts = replyId.split("_appt_");
+      if (parts.length !== 2) {
+        await sendWhatsApp(from, waError(session, "invalidSlot"));
+        return res.sendStatus(200);
+      }
+
+      const purpose = parts[0]; // "cancel" or "reschedule"
+      const ids = parts[1].split("_");
+
+      if (ids.length < 3) {
+        await sendWhatsApp(from, waError(session, "invalidSlot"));
+        return res.sendStatus(200);
+      }
+
+      const booking_id = ids[0];
+      const service_id = ids[1];
+      const staff_id = ids[2];
+
+      // Log for debugging
+      log("Appointment selection:", {
+        purpose,
+        booking_id,
+        service_id,
+        staff_id,
+      });
+
+      if (purpose === "cancel") {
+        const success = await cancelZohoAppointment(session, booking_id);
+        if (success) {
+          await sendWhatsApp(from, waSuccessMessage(session, "cancelSuccess"));
+        } else {
+          await sendWhatsApp(from, waError(session, "cancelFailed"));
+        }
+        clearSession(from);
+        return res.sendStatus(200);
+      }
+
+      if (purpose === "reschedule") {
+        session.rescheduleData = { booking_id, service_id, staff_id };
+        session.selectedService = { id: service_id };
+        session.selectedStaff = staff_id;
+        session.step = "AWAIT_RESCHEDULE_SLOT";
+
+        await sendWhatsApp(from, waSearchingMessage(session));
+
+        const today = new Date();
+        const { slots, nextSearchDate } = await findNextAvailableSlots(
+          session,
+          today,
+          3,
+          60
+        );
+
+        if (slots.length === 0) {
+          await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
+          session.step = "AWAIT_MAIN";
+          return res.sendStatus(200);
+        }
+
+        session.searchStartDate = nextSearchDate.toISOString();
+        await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
+        return res.sendStatus(200);
+      }
+    }
+
+    // ===========================
+    // RESCHEDULE SLOT SELECTION
+    // ===========================
+    if (
+      session.step === "AWAIT_RESCHEDULE_SLOT" &&
+      msg.type === "interactive" &&
+      msg.interactive.list_reply
+    ) {
+      const slotId = msg.interactive.list_reply.id;
+
+      if (slotId === "show_more_slots") {
+        await sendWhatsApp(from, waSearchingMessage(session));
+
+        const startDate = new Date(session.searchStartDate);
+        const { slots, nextSearchDate } = await findNextAvailableSlots(
+          session,
+          startDate,
+          3,
+          60
+        );
+
+        if (slots.length === 0) {
+          await sendWhatsApp(from, waError(session, "noMoreSlots"));
+          session.step = "AWAIT_MAIN";
+          return res.sendStatus(200);
+        }
+
+        session.searchStartDate = nextSearchDate.toISOString();
+        await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
+        return res.sendStatus(200);
+      }
+
+      // Parse selected slot
+      const parts = slotId.split("_");
+      if (parts.length < 4) {
+        await sendWhatsApp(from, waError(session, "invalidSlot"));
+        return res.sendStatus(200);
+      }
+
+      const dateStr = parts[2]; // "16-Oct-2025"
+      const timeStr = parts.slice(3).join(" ").replace(/-/g, ":"); // "10:15 AM"
+
+      // Convert to format: "2025-10-28 14:00:00"
+      const [day, month, year] = dateStr.split("-");
+      const monthIndex = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ].indexOf(month);
+
+      // Parse time
+      const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+      let hour = parseInt(timeMatch[1], 10);
+      const minute = timeMatch[2];
+      const ampm = timeMatch[3]?.toUpperCase();
+
+      if (ampm) {
+        if (ampm === "PM" && hour < 12) hour += 12;
+        if (ampm === "AM" && hour === 12) hour = 0;
+      }
+
+      const startTime = `${year}-${String(monthIndex + 1).padStart(
+        2,
+        "0"
+      )}-${day} ${String(hour).padStart(2, "0")}:${minute}:00`;
+
+      const success = await rescheduleZohoAppointment(
+        session,
+        session.rescheduleData.booking_id,
+        session.rescheduleData.staff_id,
+        startTime
+      );
+
+      if (success) {
+        await sendWhatsApp(
+          from,
+          waSuccessMessage(session, "rescheduleSuccess")
+        );
+      } else {
+        await sendWhatsApp(from, waError(session, "rescheduleFailed"));
+      }
+
+      clearSession(from);
+      return res.sendStatus(200);
+    }
+
     // ===========================
     // FALLBACK
     // ===========================
     session.step = "AWAIT_MAIN";
     await sendWhatsApp(from, waMainMenu(session));
     return res.sendStatus(200);
-  } catch (err) {
-    log("Webhook error", err.stack);
+  } catch (error) {
+    log("Webhook error:", error);
     res.sendStatus(500);
   }
 });
@@ -1274,49 +1528,10 @@ async function createZohoAppointment(session, userPhone) {
   const formData = new FormData();
   formData.append("service_id", session.selectedService.id);
 
-  const stype = (session.selectedService.service_type || "").toUpperCase();
-  let bookingType = "";
-
-  if (
-    (stype === "APPOINTMENT" ||
-      stype === "ONE-ON-ONE" ||
-      stype === "ONE TO ONE") &&
-    Array.isArray(session.selectedService.assigned_staffs) &&
-    session.selectedService.assigned_staffs.length > 0
-  ) {
-    const staffId =
-      session.selectedStaff || session.selectedService.assigned_staffs?.[0];
-    if (staffId) {
-      formData.append("staff_id", staffId);
-      bookingType = "staff";
-    }
-  }
-
-  if (
-    stype === "GROUP" ||
-    stype === "GROUP BOOKING" ||
-    stype === "COLLECTIVE"
-  ) {
-    let groupId = session.selectedGroup;
-    if (!groupId && Array.isArray(session.selectedService.assigned_groups)) {
-      const firstGroup = session.selectedService.assigned_groups[0];
-      groupId = typeof firstGroup === "object" ? firstGroup.id : firstGroup;
-    }
-    if (groupId) {
-      formData.append("group_id", groupId);
-      bookingType = "group";
-    }
-  }
-
-  if (
-    stype === "RESOURCE" &&
-    Array.isArray(session.selectedService.assigned_resources) &&
-    session.selectedService.assigned_resources.length > 0
-  ) {
-    formData.append(
-      "resource_id",
-      session.selectedService.assigned_resources[0]
-    );
+  let bookingType = "appointment";
+  if (session.selectedStaff) {
+    formData.append("staff_id", session.selectedStaff);
+  } else {
     bookingType = "resource";
   }
 
@@ -1338,7 +1553,6 @@ async function createZohoAppointment(session, userPhone) {
   minute = timeMatch[2];
   const ampm = timeMatch[3]?.toUpperCase();
 
-  // Convert to 24-hour format if AM/PM is present
   if (ampm) {
     if (ampm === "PM" && hour < 12) hour += 12;
     if (ampm === "AM" && hour === 12) hour = 0;
@@ -1347,14 +1561,12 @@ async function createZohoAppointment(session, userPhone) {
   hour = hour.toString().padStart(2, "0");
   const fromTimeStr = `${dateLabel} ${hour}:${minute}:00`;
 
-  // Calculate end time
   let duration = 30;
   if (session.selectedService.duration) {
     const match = session.selectedService.duration.match(/(\d+)/);
     if (match) duration = parseInt(match[1], 10);
   }
 
-  // Create proper Date object for IST timezone
   const [day, month, year] = dateLabel.split("-");
   const monthIndex = [
     "Jan",
@@ -1410,7 +1622,6 @@ async function createZohoAppointment(session, userPhone) {
   }
   formData.append("notes", notes);
 
-  // --- ADD PAYMENT INFO FOR ZOHO ---
   const paidAmount =
     session.stripePaymentAmount ??
     session.paidAmount ??
@@ -1420,7 +1631,6 @@ async function createZohoAppointment(session, userPhone) {
     "payment_info",
     JSON.stringify({ cost_paid: Number(paidAmount || 0).toFixed(2) })
   );
-  // --- END PAYMENT INFO ---
 
   formData.append(
     "customer_details",
@@ -1559,9 +1769,15 @@ async function fetchZohoAppointments(session, email) {
     log("Zoho fetch appointments", resp.status, JSON.stringify(data));
 
     if (data?.response?.returnvalue?.response) {
-      return data.response.returnvalue.response.filter(
+      const allAppointments = data.response.returnvalue.response;
+      log("All appointments:", JSON.stringify(allAppointments));
+
+      const upcomingAppointments = allAppointments.filter(
         (a) => a.status === "upcoming"
       );
+
+      log("Upcoming appointments found:", upcomingAppointments.length);
+      return upcomingAppointments;
     }
     return [];
   } catch (err) {
@@ -1662,10 +1878,21 @@ function waAppointmentList(session, appointments, page, purpose) {
   const start = page * 3;
   const pageItems = appointments.slice(start, start + 3);
 
-  const rows = pageItems.map((appt) => ({
-    id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
-    title: `${appt.service_name} on ${appt.start_time}`,
-  }));
+  const rows = pageItems.map((appt) => {
+    // Format: "Service Name on DD-MMM-YYYY HH:MM"
+    let title = `${appt.service_name} on ${appt.start_time}`;
+
+    // Truncate if too long (WhatsApp limit is 24 chars)
+    if (title.length > 24) {
+      title = title.substring(0, 21) + "...";
+    }
+
+    return {
+      id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
+      title: title,
+      description: `${appt.service_name}`, // Show full name in description
+    };
+  });
 
   if (start + 3 < appointments.length) {
     rows.push({
