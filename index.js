@@ -1526,11 +1526,20 @@ async function createZohoAppointment(session, userPhone) {
   const formData = new FormData();
   formData.append("service_id", session.selectedService.id);
 
-  let bookingType = "appointment";
+  // Determine service type and append appropriate ID
+  const serviceType = (
+    session.selectedService.service_type || ""
+  ).toUpperCase();
+  const bookingType = serviceType === "RESOURCE" ? "resource" : "appointment";
+
   if (session.selectedStaff) {
-    formData.append("staff_id", session.selectedStaff);
-  } else {
-    bookingType = "resource";
+    if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
+      formData.append("group_id", session.selectedStaff);
+    } else if (serviceType === "RESOURCE") {
+      formData.append("resource_id", session.selectedStaff);
+    } else {
+      formData.append("staff_id", session.selectedStaff);
+    }
   }
 
   const dateLabel = session.selectedDate.label;
@@ -1639,10 +1648,20 @@ async function createZohoAppointment(session, userPhone) {
     })
   );
 
+  // Updated logging to show ID type
+  const idType =
+    serviceType === "COLLECTIVE" || serviceType === "GROUP"
+      ? "group_id"
+      : serviceType === "RESOURCE"
+      ? "resource_id"
+      : "staff_id";
+
   log("Zoho Booking Params", {
     service_id: session.selectedService.id,
-    bookingType,
-    staff_id: session.selectedStaff,
+    service_type: serviceType,
+    booking_type: bookingType,
+    id_type: idType,
+    id_value: session.selectedStaff,
     from_time: fromTimeStr,
     to_time: toTimeStr,
     timezone: "Asia/Kolkata",
