@@ -6,7 +6,6 @@
   "reschedule": "Reschedule",
   "cancel": "Cancel",
   "help": "Help",
-  "support": "Support",
   "home": "Main Menu",
   "tryAgain": "Try Again",
   "selectService": "Please select a service",
@@ -57,12 +56,11 @@
   "invalidSlot": "Invalid slot selection. Please try again.",
   "bookingCancelled": "Booking process cancelled due to too many invalid attempts.",
   "bookingFailed": "Sorry, we couldn't complete your booking. Please try again.",
-  "helpText": "📖 Help & FAQ\n\nHow to book an appointment:\n1. Select 'My Bookings'\n2. Choose 'Book New Appointment'\n3. Select a service\n4. Choose a time slot\n5. Enter your details\n\nHow to reschedule:\n1. Select 'My Bookings'\n2. Choose 'Reschedule'\n3. Enter your email\n4. Select the appointment\n5. Choose a new time slot\n\nHow to cancel:\n1. Select 'My Bookings'\n2. Choose 'Cancel'\n3. Enter your email\n4. Select the appointment to cancel",
-  "supportText": "🆘 Support\n\nNeed assistance? Contact our support team:\n\n📧 Email: support@example.com\n📞 Phone: +91 1234567890\n\nBusiness Hours:\nMon-Fri: 9:00 AM - 6:00 PM\nSat: 10:00 AM - 4:00 PM\nSun: Closed",
+  "helpText": "📖 Help & FAQ\n\nHow to book an appointment:\n1. Select 'My Bookings'\n2. Choose 'Book New Appointment'\n3. Select a service\n4. Choose a time slot\n5. Enter your details\n\nHow to reschedule:\n1. Select 'My Bookings'\n2. Choose 'Reschedule'\n3. Enter your email\n4. Select the appointment\n5. Choose a new time slot\n\nHow to cancel:\n1. Select 'My Bookings'\n2. Choose 'Cancel'\n3. Enter your email\n4. Select the appointment to cancel\n\nNeed assistance?\n📧 Email: help@example.com\n📞 Phone: +91 1234567890\n\nBusiness Hours:\nMon-Fri: 9:00 AM - 6:00 PM\nSat: 10:00 AM - 4:00 PM\nSun: Closed",
   "paymentRequired": "Payment Required",
   "amount": "Amount",
   "paymentLink": "Payment Link",
   "paid": "I've Paid",
   "paymentPending": "⏳ We haven't received your payment yet. Please complete the payment and click 'I've Paid' button.",
-  "paymentLinkFailed": "Failed to generate payment link. Please try again or contact support."
+  "paymentLinkFailed": "Failed to generate payment link. Please try again or contact help desk."
 }

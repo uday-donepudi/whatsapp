@@ -278,10 +278,6 @@ function waMainMenu(session) {
             type: "reply",
             reply: { id: "help_btn", title: t(session, "help") },
           },
-          {
-            type: "reply",
-            reply: { id: "support_btn", title: t(session, "support") },
-          },
         ],
       },
     },
@@ -471,26 +467,6 @@ function waHelpMenu(session) {
   };
 }
 
-function waSupportMenu(session) {
-  return {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: {
-        text: t(session, "supportText"),
-      },
-      action: {
-        buttons: [
-          {
-            type: "reply",
-            reply: { id: "home_btn", title: t(session, "home") },
-          },
-        ],
-      },
-    },
-  };
-}
-
 // Add new utility function for scanning slots
 async function findNextAvailableSlots(
   session,
@@ -499,16 +475,16 @@ async function findNextAvailableSlots(
   maxDaysToScan = 60
 ) {
   const slots = [];
+  const seenSlots = new Set(); // Track unique time slots
   const serviceId = session.selectedService.id;
   let currentDate = new Date(startDate);
   const endDate = new Date(startDate);
   endDate.setDate(endDate.getDate() + maxDaysToScan);
-  let slotCounter = 0; // Add counter for uniqueness
+  let slotCounter = 0;
 
   while (slots.length < limit && currentDate <= endDate) {
     const dateStr = formatDateForZoho(currentDate);
 
-    // Build URL with staff_id if available
     let slotUrl = `${ZOHO_BASE}/availableslots?service_id=${serviceId}&selected_date=${dateStr}`;
     if (session.selectedStaff) {
       slotUrl += `&staff_id=${session.selectedStaff}`;
@@ -521,19 +497,27 @@ async function findNextAvailableSlots(
       for (const timeSlot of availableSlots) {
         if (slots.length >= limit) break;
 
-        // Use counter + timestamp for guaranteed uniqueness
-        const uniqueId = `slot_${slotCounter}_${dateStr}_${timeSlot.replace(
-          /[:\s]/g,
-          "-"
-        )}`;
-        slotCounter++;
+        // Create a unique key combining date and time
+        const slotKey = `${dateStr}_${timeSlot}`;
 
-        slots.push({
-          id: uniqueId,
-          label: `${dateStr} ${timeSlot}`,
-          date: dateStr,
-          time: timeSlot,
-        });
+        // Only add if we haven't seen this exact date/time combination
+        if (!seenSlots.has(slotKey)) {
+          seenSlots.add(slotKey);
+
+          // Use counter + timestamp for guaranteed uniqueness in ID
+          const uniqueId = `slot_${slotCounter}_${dateStr}_${timeSlot.replace(
+            /[:\s]/g,
+            "-"
+          )}`;
+          slotCounter++;
+
+          slots.push({
+            id: uniqueId,
+            label: `${dateStr} ${timeSlot}`,
+            date: dateStr,
+            time: timeSlot,
+          });
+        }
       }
     }
 
@@ -798,12 +782,6 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      if (btnId === "support_btn") {
-        session.step = "AWAIT_SUPPORT";
-        await sendWhatsApp(from, waSupportMenu(session));
-        return res.sendStatus(200);
-      }
-
       if (btnId === "my_bookings_btn") {
         session.step = "AWAIT_BOOKING_MENU";
         await sendWhatsApp(from, waMyBookingsMenu(session));
@@ -860,10 +838,10 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
-    // 4. HELP/SUPPORT: HOME BUTTON
+    // 4. HELP: HOME BUTTON
     // ===========================
     if (
-      (session.step === "AWAIT_HELP" || session.step === "AWAIT_SUPPORT") &&
+      session.step === "AWAIT_HELP" &&
       msg.type === "interactive" &&
       msg.interactive.button_reply?.id === "home_btn"
     ) {
@@ -1816,7 +1794,7 @@ async function fetchZohoAppointments(
         },
         body: `data=${JSON.stringify({
           customer_email: email,
-          from_time: formattedDate, // Add the formatted start date
+          from_time: formattedDate,
         })}`,
       }
     );
@@ -1828,15 +1806,10 @@ async function fetchZohoAppointments(
       const allAppointments = data.response.returnvalue.response;
       log("All appointments:", JSON.stringify(allAppointments));
 
-      // Filter for active appointments
+      // Filter active appointments (non-cancelled, non-completed, future dates)
       const activeAppointments = allAppointments.filter((a) => {
-        // Parse appointment date
         const appointmentDate = new Date(a.customer_booking_start_time);
         const now = new Date();
-
-        // Consider active if:
-        // 1. Start time is in the future AND
-        // 2. Status is not "cancel" or "completed"
         return (
           appointmentDate > now && !["cancel", "completed"].includes(a.status)
         );
@@ -1844,20 +1817,29 @@ async function fetchZohoAppointments(
 
       log("Active appointments found:", activeAppointments.length);
 
-      // If we found active appointments, return them
-      if (activeAppointments.length > 0) {
-        return activeAppointments;
+      // Take only first 3 unique appointments
+      const uniqueAppointments = [];
+      const seenIds = new Set();
+
+      for (const appt of activeAppointments) {
+        if (!seenIds.has(appt.booking_id)) {
+          seenIds.add(appt.booking_id);
+          uniqueAppointments.push(appt);
+          if (uniqueAppointments.length >= 3) break;
+        }
       }
 
-      // If no active appointments and we haven't hit max attempts,
-      // try again with a date 30 days in the future
-      if (maxAttempts > 1) {
-        const nextDate = new Date(startDate);
-        nextDate.setDate(nextDate.getDate() + 30);
-        log("Retrying with new date:", nextDate);
-
-        return fetchZohoAppointments(session, email, nextDate, maxAttempts - 1);
+      // If we found any appointments or this is our last attempt, return them
+      if (uniqueAppointments.length > 0 || maxAttempts <= 1) {
+        return uniqueAppointments;
       }
+
+      // If no appointments and we have attempts left, try next 30 days
+      const nextDate = new Date(startDate);
+      nextDate.setDate(nextDate.getDate() + 30);
+      log("No appointments found, trying next date:", nextDate);
+
+      return fetchZohoAppointments(session, email, nextDate, maxAttempts - 1);
     }
     return [];
   } catch (err) {
