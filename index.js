@@ -1748,228 +1748,125 @@ async function createZohoDeskTicket(session) {
   }
 }
 
-async function fetchZohoAppointments(
-  session,
-  email,
-  startDate = new Date(),
-  maxAttempts = 5
-) {
+async function fetchZohoAppointments(session, email) {
   try {
     const zohoToken = await getSessionZohoToken(session);
+    const uniqueAppointments = new Set();
+    const weekStart = new Date();
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 7);
 
-    const monthNames = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-
-    const formattedDate = `${String(startDate.getDate()).padStart(2, "0")}-${
-      monthNames[startDate.getMonth()]
-    }-${startDate.getFullYear()} ${String(startDate.getHours()).padStart(
-      2,
-      "0"
-    )}:${String(startDate.getMinutes()).padStart(2, "0")}:${String(
-      startDate.getSeconds()
-    ).padStart(2, "0")}`;
-
-    log("Fetching appointments from date:", formattedDate);
-
-    const resp = await fetch(
-      "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Zoho-oauthtoken ${zohoToken}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: `data=${JSON.stringify({
-          customer_email: email,
-          from_time: formattedDate,
-        })}`,
-      }
+    log(
+      `Fetching appointments for week (${weekStart.toDateString()} to ${weekEnd.toDateString()})`
     );
 
-    const data = await resp.json();
-    log("Zoho fetch appointments", resp.status, JSON.stringify(data));
+    const formatDateForZoho = (date) => {
+      const monthNames = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      return `${String(date.getDate()).padStart(2, "0")}-${
+        monthNames[date.getMonth()]
+      }-${date.getFullYear()} ${String(date.getHours()).padStart(
+        2,
+        "0"
+      )}:${String(date.getMinutes()).padStart(2, "0")}:${String(
+        date.getSeconds()
+      ).padStart(2, "0")}`;
+    };
 
-    // Check if we got a valid response with appointments array
-    if (
-      data?.response?.returnvalue?.response &&
-      Array.isArray(data.response.returnvalue.response)
-    ) {
-      const allAppointments = data.response.returnvalue.response;
-      log("All appointments:", JSON.stringify(allAppointments));
+    let currentDate = new Date(weekStart);
+    let foundAppointments = [];
 
-      // Filter active appointments
-      const activeAppointments = allAppointments.filter((a) => {
-        const appointmentDate = new Date(
-          a.customer_booking_start_time || a.start_time
-        );
-        const now = new Date();
-        return (
-          appointmentDate > now && !["cancel", "completed"].includes(a.status)
-        );
-      });
+    while (currentDate <= weekEnd && foundAppointments.length < 3) {
+      const formattedDate = formatDateForZoho(currentDate);
+      log("Fetching appointments from date:", formattedDate);
 
-      log("Active appointments found:", activeAppointments.length);
+      const resp = await fetch(
+        "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Zoho-oauthtoken ${zohoToken}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: `data=${JSON.stringify({
+            customer_email: email,
+            from_time: formattedDate,
+          })}`,
+        }
+      );
 
-      // Take only first 3 unique appointments
-      const uniqueAppointments = [];
-      const seenIds = new Set();
+      const data = await resp.json();
+      log("Zoho fetch appointments", resp.status, JSON.stringify(data));
 
-      for (const appt of activeAppointments) {
-        if (!seenIds.has(appt.booking_id)) {
-          seenIds.add(appt.booking_id);
-          uniqueAppointments.push(appt);
-          if (uniqueAppointments.length >= 3) break;
+      if (
+        data?.response?.returnvalue?.response &&
+        Array.isArray(data.response.returnvalue.response)
+      ) {
+        const appointments = data.response.returnvalue.response;
+
+        // Filter active appointments
+        const activeAppointments = appointments.filter((appt) => {
+          const appointmentDate = new Date(
+            appt.customer_booking_start_time || appt.start_time
+          );
+          const now = new Date();
+          return (
+            appointmentDate > now &&
+            appointmentDate <= weekEnd &&
+            !["cancel", "completed"].includes(appt.status) &&
+            !uniqueAppointments.has(appt.booking_id)
+          );
+        });
+
+        // Add unique appointments
+        for (const appt of activeAppointments) {
+          if (!uniqueAppointments.has(appt.booking_id)) {
+            uniqueAppointments.add(appt.booking_id);
+            foundAppointments.push(appt);
+          }
         }
       }
 
-      // If we found appointments or this is our last attempt, return them
-      if (uniqueAppointments.length > 0 || maxAttempts <= 1) {
-        return uniqueAppointments;
-      }
-
-      // Try next 30 days
-      const nextDate = new Date(startDate);
-      nextDate.setDate(nextDate.getDate() + 30);
-      log("No appointments found, trying next date:", nextDate);
-
-      return fetchZohoAppointments(session, email, nextDate, maxAttempts - 1);
-    } else {
-      // No appointments found for this date range
-      if (maxAttempts <= 1) {
-        return [];
-      }
-
-      // Try next 30 days
-      const nextDate = new Date(startDate);
-      nextDate.setDate(nextDate.getDate() + 30);
-      log("No appointments found, trying next date:", nextDate);
-
-      return fetchZohoAppointments(session, email, nextDate, maxAttempts - 1);
+      // Move to next day
+      currentDate.setDate(currentDate.getDate() + 1);
+      // Small delay to prevent rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
+
+    log("Found appointments:", foundAppointments.length);
+    return foundAppointments;
   } catch (err) {
     log("Zoho fetch appointments error:", err);
     return [];
   }
 }
 
-async function rescheduleZohoAppointment(
-  session,
-  booking_id,
-  staff_id,
-  start_time
-) {
-  try {
-    const zohoToken = await getSessionZohoToken(session);
-    const formData = new FormData();
-    formData.append("booking_id", booking_id);
-    formData.append("staff_id", staff_id);
-    formData.append("start_time", start_time);
-
-    const resp = await fetch(
-      "https://www.zohoapis.in/bookings/v1/json/rescheduleappointment",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        },
-        body: formData,
-      }
-    );
-
-    const data = await resp.json();
-    log("Zoho reschedule appointment", resp.status, JSON.stringify(data));
-    return data?.response?.status === "success";
-  } catch (err) {
-    log("Zoho reschedule error:", err);
-    return false;
-  }
-}
-
-async function cancelZohoAppointment(session, booking_id) {
-  try {
-    const zohoToken = await getSessionZohoToken(session);
-    const formData = new FormData();
-    formData.append("booking_id", booking_id);
-    formData.append("action", "cancel");
-
-    const resp = await fetch(
-      "https://www.zohoapis.in/bookings/v1/json/updateappointment",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        },
-        body: formData,
-      }
-    );
-
-    const data = await resp.json();
-    log("Zoho cancel appointment", resp.status, JSON.stringify(data));
-    return data?.response?.status === "success";
-  } catch (err) {
-    log("Zoho cancel error:", err);
-    return false;
-  }
-}
-
-// After existing wa* helper functions...
-
-function waMyBookingsMenu(session) {
-  return {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: { text: t(session, "myBookingsMenu") },
-      action: {
-        buttons: [
-          {
-            type: "reply",
-            reply: { id: "book_new_btn", title: t(session, "bookAppointment") },
-          },
-          {
-            type: "reply",
-            reply: { id: "reschedule_btn", title: t(session, "reschedule") },
-          },
-          {
-            type: "reply",
-            reply: { id: "cancel_btn", title: t(session, "cancel") },
-          },
-        ],
-      },
-    },
-  };
-}
-
 function waAppointmentList(session, appointments, page, purpose) {
-  const start = page * 3;
-  const pageItems = appointments.slice(start, start + 3);
-
-  const rows = pageItems.map((appt) => {
-    // Parse the date and time
+  const rows = appointments.map((appt) => {
     const dateTime = new Date(
       appt.customer_booking_start_time || appt.start_time
     );
 
-    // Format time only (e.g., "10:30 AM")
+    // Format time (e.g., "10:30 AM")
     const timeStr = dateTime.toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: true,
     });
 
-    // Format date in shorter form (e.g., "24 Oct")
+    // Format date (e.g., "24 Oct")
     const dateStr = `${dateTime.getDate()} ${
       [
         "Jan",
@@ -1989,17 +1886,10 @@ function waAppointmentList(session, appointments, page, purpose) {
 
     return {
       id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
-      title: timeStr, // Show only time in title (within 24 char limit)
-      description: `${appt.service_name}\n${dateStr}`, // Show service and date in description
+      title: timeStr,
+      description: `${appt.service_name}\n${dateStr}`,
     };
   });
-
-  if (start + 3 < appointments.length) {
-    rows.push({
-      id: `show_more_appts_${purpose}_${page + 1}`,
-      title: t(session, "showMore"),
-    });
-  }
 
   return {
     type: "interactive",
@@ -2012,24 +1902,6 @@ function waAppointmentList(session, appointments, page, purpose) {
           {
             title: t(session, "appointments"),
             rows,
-          },
-        ],
-      },
-    },
-  };
-}
-
-function waSuccessMessage(session, messageKey) {
-  return {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: { text: t(session, messageKey) },
-      action: {
-        buttons: [
-          {
-            type: "reply",
-            reply: { id: "home_btn", title: t(session, "home") },
           },
         ],
       },
