@@ -467,6 +467,32 @@ function waHelpMenu(session) {
   };
 }
 
+function waMyBookingsMenu(session) {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: t(session, "myBookingsMenu") },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "book_new_btn", title: t(session, "bookNew") },
+          },
+          {
+            type: "reply",
+            reply: { id: "reschedule_btn", title: t(session, "reschedule") },
+          },
+          {
+            type: "reply",
+            reply: { id: "cancel_btn", title: t(session, "cancel") },
+          },
+        ],
+      },
+    },
+  };
+}
+
 // Add new utility function for scanning slots
 async function findNextAvailableSlots(
   session,
