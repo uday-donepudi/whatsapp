@@ -1748,116 +1748,104 @@ async function createZohoDeskTicket(session) {
   }
 }
 
-async function fetchZohoAppointments(
-  session,
-  email,
-  startDate = new Date(),
-  maxAttempts = 5
-) {
+async function fetchZohoAppointments(session, email) {
   try {
     const zohoToken = await getSessionZohoToken(session);
+    const uniqueAppointments = new Set();
+    const startDate = new Date();
+    const oneWeekFromNow = new Date(startDate);
+    oneWeekFromNow.setDate(oneWeekFromNow.getDate() + 7);
 
-    const monthNames = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
+    // Format date helper
+    const formatDateForZoho = (date) => {
+      const monthNames = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      return `${String(date.getDate()).padStart(2, "0")}-${
+        monthNames[date.getMonth()]
+      }-${date.getFullYear()} ${String(date.getHours()).padStart(
+        2,
+        "0"
+      )}:${String(date.getMinutes()).padStart(2, "0")}:${String(
+        date.getSeconds()
+      ).padStart(2, "0")}`;
+    };
 
-    const formattedDate = `${String(startDate.getDate()).padStart(2, "0")}-${
-      monthNames[startDate.getMonth()]
-    }-${startDate.getFullYear()} ${String(startDate.getHours()).padStart(
-      2,
-      "0"
-    )}:${String(startDate.getMinutes()).padStart(2, "0")}:${String(
-      startDate.getSeconds()
-    ).padStart(2, "0")}`;
+    let currentDate = new Date(startDate);
+    let foundAppointments = [];
 
-    log("Fetching appointments from date:", formattedDate);
+    while (currentDate <= oneWeekFromNow && foundAppointments.length < 3) {
+      const formattedDate = formatDateForZoho(currentDate);
+      log("Fetching appointments from date:", formattedDate);
 
-    const resp = await fetch(
-      "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Zoho-oauthtoken ${zohoToken}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: `data=${JSON.stringify({
-          customer_email: email,
-          from_time: formattedDate,
-        })}`,
-      }
-    );
+      const resp = await fetch(
+        "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Zoho-oauthtoken ${zohoToken}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: `data=${JSON.stringify({
+            customer_email: email,
+            from_time: formattedDate,
+          })}`,
+        }
+      );
 
-    const data = await resp.json();
-    log("Zoho fetch appointments", resp.status, JSON.stringify(data));
+      const data = await resp.json();
+      log("Zoho fetch appointments", resp.status, JSON.stringify(data));
 
-    // Check if we got a valid response with appointments array
-    if (
-      data?.response?.returnvalue?.response &&
-      Array.isArray(data.response.returnvalue.response)
-    ) {
-      const allAppointments = data.response.returnvalue.response;
-      log("All appointments:", JSON.stringify(allAppointments));
+      if (
+        data?.response?.returnvalue?.response &&
+        Array.isArray(data.response.returnvalue.response)
+      ) {
+        const appointments = data.response.returnvalue.response;
 
-      // Filter active appointments
-      const activeAppointments = allAppointments.filter((a) => {
-        const appointmentDate = new Date(
-          a.customer_booking_start_time || a.start_time
-        );
-        const now = new Date();
-        return (
-          appointmentDate > now && !["cancel", "completed"].includes(a.status)
-        );
-      });
+        // Filter active appointments
+        const activeAppointments = appointments.filter((appt) => {
+          const appointmentDate = new Date(
+            appt.customer_booking_start_time || appt.start_time
+          );
+          const now = new Date();
+          return (
+            appointmentDate > now &&
+            !["cancel", "completed"].includes(appt.status) &&
+            !uniqueAppointments.has(appt.booking_id)
+          );
+        });
 
-      log("Active appointments found:", activeAppointments.length);
-
-      // Take only first 3 unique appointments
-      const uniqueAppointments = [];
-      const seenIds = new Set();
-
-      for (const appt of activeAppointments) {
-        if (!seenIds.has(appt.booking_id)) {
-          seenIds.add(appt.booking_id);
-          uniqueAppointments.push(appt);
-          if (uniqueAppointments.length >= 3) break;
+        // Add unique appointments
+        for (const appt of activeAppointments) {
+          if (foundAppointments.length >= 3) break;
+          if (!uniqueAppointments.has(appt.booking_id)) {
+            uniqueAppointments.add(appt.booking_id);
+            foundAppointments.push(appt);
+          }
         }
       }
 
-      // If we found appointments or this is our last attempt, return them
-      if (uniqueAppointments.length > 0 || maxAttempts <= 1) {
-        return uniqueAppointments;
+      // Move to next day if haven't found 3 appointments yet
+      if (foundAppointments.length < 3) {
+        currentDate.setDate(currentDate.getDate() + 1);
+        // Small delay to prevent rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-
-      // Try next 30 days
-      const nextDate = new Date(startDate);
-      nextDate.setDate(nextDate.getDate() + 30);
-      log("No appointments found, trying next date:", nextDate);
-
-      return fetchZohoAppointments(session, email, nextDate, maxAttempts - 1);
-    } else {
-      // No appointments found for this date range
-      if (maxAttempts <= 1) {
-        return [];
-      }
-
-      // Try next 30 days
-      const nextDate = new Date(startDate);
-      nextDate.setDate(nextDate.getDate() + 30);
-      log("No appointments found, trying next date:", nextDate);
-
-      return fetchZohoAppointments(session, email, nextDate, maxAttempts - 1);
     }
+
+    log("Found appointments:", foundAppointments.length);
+    return foundAppointments;
   } catch (err) {
     log("Zoho fetch appointments error:", err);
     return [];
