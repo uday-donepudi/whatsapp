@@ -1957,42 +1957,40 @@ function waAppointmentList(session, appointments, page, purpose) {
   const pageItems = appointments.slice(start, start + 3);
 
   const rows = pageItems.map((appt) => {
-    // Parse the date and time from customer_booking_start_time
-    const dateTime = new Date(appt.customer_booking_start_time);
-    const monthNames = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
+    // Parse the date and time
+    const dateTime = new Date(
+      appt.customer_booking_start_time || appt.start_time
+    );
 
-    // Format: DD-MMM-YYYY
-    const formattedDate = `${String(dateTime.getDate()).padStart(2, "0")}-${
-      monthNames[dateTime.getMonth()]
-    }-${dateTime.getFullYear()}`;
-
-    // Format: HH:MM AM/PM
-    const formattedTime = dateTime.toLocaleTimeString("en-US", {
+    // Format time only (e.g., "10:30 AM")
+    const timeStr = dateTime.toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: true,
     });
 
-    // Create title with service name and date/time
-    const title = `${formattedDate} ${formattedTime}`;
+    // Format date in shorter form (e.g., "24 Oct")
+    const dateStr = `${dateTime.getDate()} ${
+      [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ][dateTime.getMonth()]
+    }`;
 
     return {
       id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
-      title: title, // WhatsApp list title (limited to 24 chars)
-      description: appt.service_name, // Show service name in description
+      title: timeStr, // Show only time in title (within 24 char limit)
+      description: `${appt.service_name}\n${dateStr}`, // Show service and date in description
     };
   });
 
