@@ -28,6 +28,7 @@
   "availableSlots": "Available Time Slots",
   "showMore": "Show More",
   "searchingSlots": "🔍 Searching for available slots... Please wait.",
+  "searchingAppointments": "Searching for your appointments... Please wait.",
   "enterName": "Please enter your full name:",
   "invalidName": "Invalid name. Please enter a valid name (max 100 characters):",
   "enterEmail": "Please enter your email address:",

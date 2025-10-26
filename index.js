@@ -668,6 +668,16 @@ function waSearchingMessage(session) {
   };
 }
 
+// Add new helper function for searching appointments message
+function waSearchingAppointments(session) {
+  return {
+    type: "text",
+    text: {
+      body: "🔍 " + t(session, "searchingAppointments"),
+    },
+  };
+}
+
 // Add payment-related functions
 async function createStripePaymentLink(session, service) {
   if (!stripe) {
@@ -1390,6 +1400,9 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
+      // Show searching message
+      await sendWhatsApp(from, waSearchingAppointments(session));
+
       const appointments = await fetchZohoAppointments(session, email);
       if (!appointments.length) {
         await sendWhatsApp(from, waError(session, "noAppointmentsFound"));
@@ -1422,6 +1435,9 @@ app.post("/webhook", async (req, res) => {
         await sendWhatsApp(from, waTextPrompt(session, "invalidEmail"));
         return res.sendStatus(200);
       }
+
+      // Show searching message
+      await sendWhatsApp(from, waSearchingAppointments(session));
 
       const appointments = await fetchZohoAppointments(session, email);
       if (!appointments.length) {
