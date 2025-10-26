@@ -1385,14 +1385,13 @@ app.post("/webhook", async (req, res) => {
       }
 
       // Handle appointment selection
-      // Format: reschedule_appt_HE-00052_333192000000042016_333192000000042017
       const parts = replyId.split("_appt_");
       if (parts.length !== 2) {
         await sendWhatsApp(from, waError(session, "invalidSlot"));
         return res.sendStatus(200);
       }
 
-      const purpose = parts[0]; // "cancel" or "reschedule"
+      const purpose = parts[0];
       const ids = parts[1].split("_");
 
       if (ids.length < 3) {
@@ -1404,7 +1403,6 @@ app.post("/webhook", async (req, res) => {
       const service_id = ids[1];
       const staff_id = ids[2];
 
-      // Log for debugging
       log("Appointment selection:", {
         purpose,
         booking_id,
@@ -1415,18 +1413,43 @@ app.post("/webhook", async (req, res) => {
       if (purpose === "cancel") {
         const success = await cancelZohoAppointment(session, booking_id);
         if (success) {
+          session.step = "AWAIT_MAIN";
           await sendWhatsApp(from, waSuccessMessage(session, "cancelSuccess"));
         } else {
           await sendWhatsApp(from, waError(session, "cancelFailed"));
         }
-        clearSession(from);
         return res.sendStatus(200);
       }
 
       if (purpose === "reschedule") {
+        // Fetch service details to determine service type
+        const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
+        const { data } = await fetchZoho(serviceUrl, {}, 3, session);
+        const services = data?.response?.returnvalue?.data || [];
+        const service = services.find((s) => s.id === service_id);
+
+        if (!service) {
+          await sendWhatsApp(from, waError(session, "invalidService"));
+          return res.sendStatus(200);
+        }
+
+        const serviceType = (service.service_type || "").toUpperCase();
+
+        // Store reschedule data
         session.rescheduleData = { booking_id, service_id, staff_id };
-        session.selectedService = { id: service_id };
-        session.selectedStaff = staff_id;
+        session.selectedService = service;
+
+        // Set appropriate staff/group based on service type
+        if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
+          // For collective bookings, use group_id
+          session.selectedGroup = service.assigned_groups?.[0]?.id || staff_id;
+          session.selectedStaff = null;
+        } else {
+          // For other types, use staff_id
+          session.selectedStaff = staff_id;
+          session.selectedGroup = null;
+        }
+
         session.step = "AWAIT_RESCHEDULE_SLOT";
 
         await sendWhatsApp(from, waSearchingMessage(session));
@@ -1765,7 +1788,7 @@ async function createZohoAppointment(session, userPhone) {
     id_type: idType,
     id_value: idValue,
     from_time: fromTimeStr,
-    to_time: toTimeStr,
+    to_time: toTimeStr, // Always send to_time
     duration: `${duration} mins`,
     timezone: "Asia/Kolkata",
     customer_details: {
@@ -1983,9 +2006,35 @@ async function rescheduleZohoAppointment(
   try {
     const zohoToken = await getSessionZohoToken(session);
     const formData = new FormData();
+
+    // Add booking ID and start time
     formData.append("booking_id", booking_id);
-    formData.append("staff_id", staff_id);
     formData.append("start_time", start_time);
+
+    // Check service type and append appropriate ID
+    const serviceType = (
+      session.selectedService?.service_type || ""
+    ).toUpperCase();
+
+    if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
+      formData.append("group_id", session.selectedGroup || staff_id);
+    } else if (serviceType === "RESOURCE") {
+      formData.append("resource_id", staff_id);
+    } else {
+      formData.append("staff_id", staff_id);
+    }
+
+    log("Reschedule params:", {
+      booking_id,
+      service_type: serviceType,
+      id_used:
+        serviceType === "COLLECTIVE" || serviceType === "GROUP"
+          ? `group_id: ${session.selectedGroup || staff_id}`
+          : serviceType === "RESOURCE"
+          ? `resource_id: ${staff_id}`
+          : `staff_id: ${staff_id}`,
+      start_time,
+    });
 
     const resp = await fetch(
       "https://www.zohoapis.in/bookings/v1/json/rescheduleappointment",
