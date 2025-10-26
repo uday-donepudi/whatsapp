@@ -1618,10 +1618,13 @@ async function createZohoAppointment(session, userPhone) {
   minute = timeMatch[2];
   const ampm = timeMatch[3]?.toUpperCase();
 
-  if (ampm) {
-    if (ampm === "PM" && hour < 12) hour += 12;
-    if (ampm === "AM" && hour === 12) hour = 0;
+  // FIXED: Convert 12-hour to 24-hour format properly
+  if (ampm === "PM" && hour !== 12) {
+    hour += 12;
+  } else if (ampm === "AM" && hour === 12) {
+    hour = 0;
   }
+  // If no AM/PM specified, assume it's already in 24-hour format
 
   hour = hour.toString().padStart(2, "0");
   const fromTimeStr = `${dateLabel} ${hour}:${minute}:00`;
@@ -1678,11 +1681,7 @@ async function createZohoAppointment(session, userPhone) {
   const toTimeStr = `${toDay}-${toMonthName}-${toYear} ${toHour}:${toMinute}:00`;
 
   formData.append("from_time", fromTimeStr);
-
-  // Only add to_time for non-collective bookings
-  if (serviceType !== "COLLECTIVE" && serviceType !== "GROUP") {
-    formData.append("to_time", toTimeStr);
-  }
+  formData.append("to_time", toTimeStr); // Always send to_time
 
   formData.append("timezone", "Asia/Kolkata");
 
@@ -1725,10 +1724,8 @@ async function createZohoAppointment(session, userPhone) {
     id_type: idType,
     id_value: session.selectedStaff || session.selectedGroup,
     from_time: fromTimeStr,
-    to_time:
-      serviceType === "COLLECTIVE" || serviceType === "GROUP"
-        ? "N/A"
-        : toTimeStr,
+    to_time: toTimeStr,
+    duration: `${duration} mins`,
     timezone: "Asia/Kolkata",
     customer_details: {
       name: session.customerName,
