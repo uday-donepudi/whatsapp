@@ -475,7 +475,6 @@ async function findNextAvailableSlots(
   maxDaysToScan = 60
 ) {
   const slots = [];
-  const seenSlots = new Set(); // Track unique time slots
   const serviceId = session.selectedService.id;
   let currentDate = new Date(startDate);
   const endDate = new Date(startDate);
@@ -498,60 +497,113 @@ async function findNextAvailableSlots(
     }
   }
 
+  // Track which date we're currently showing slots from and the index
+  if (!session.currentSlotDate) {
+    session.currentSlotDate = formatDateForZoho(currentDate);
+    session.currentDateSlotIndex = 0;
+    session.allSlotsForCurrentDate = null;
+  }
+
+  // If we have a stored date, start from that date
+  if (session.currentSlotDate) {
+    const [day, month, year] = session.currentSlotDate.split("-");
+    const monthIndex = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ].indexOf(month);
+    currentDate = new Date(year, monthIndex, parseInt(day));
+  }
+
   while (slots.length < limit && currentDate <= endDate) {
     const dateStr = formatDateForZoho(currentDate);
 
-    let slotUrl = `${ZOHO_BASE}/availableslots?service_id=${serviceId}&selected_date=${dateStr}`;
+    // If we're on a new date or don't have slots cached, fetch them
+    if (
+      session.currentSlotDate !== dateStr ||
+      !session.allSlotsForCurrentDate
+    ) {
+      let slotUrl = `${ZOHO_BASE}/availableslots?service_id=${serviceId}&selected_date=${dateStr}`;
 
-    // Add staff_id or group_id based on service type
-    if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
-      if (groupId) {
-        slotUrl += `&group_id=${groupId}`;
-      }
-    } else {
-      if (staffId) {
-        slotUrl += `&staff_id=${staffId}`;
-      }
-    }
-
-    console.log("Fetching slots from Zoho:", slotUrl);
-    const { data } = await fetchZoho(slotUrl, {}, 3, session);
-    const availableSlots = data?.response?.returnvalue?.data;
-
-    if (Array.isArray(availableSlots) && availableSlots.length > 0) {
-      for (const timeSlot of availableSlots) {
-        if (slots.length >= limit) break;
-
-        // Create a unique key combining date and time
-        const slotKey = `${dateStr}_${timeSlot}`;
-
-        // Only add if we haven't seen this exact date/time combination
-        if (!seenSlots.has(slotKey)) {
-          seenSlots.add(slotKey);
-
-          // Use counter + timestamp for guaranteed uniqueness in ID
-          const uniqueId = `slot_${slotCounter}_${dateStr}_${timeSlot.replace(
-            /[:\s]/g,
-            "-"
-          )}`;
-          slotCounter++;
-
-          slots.push({
-            id: uniqueId,
-            label: `${dateStr} ${timeSlot}`,
-            date: dateStr,
-            time: timeSlot,
-          });
+      // Add staff_id or group_id based on service type
+      if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
+        if (groupId) {
+          slotUrl += `&group_id=${groupId}`;
+        }
+      } else {
+        if (staffId) {
+          slotUrl += `&staff_id=${staffId}`;
         }
       }
+
+      console.log("Fetching slots from Zoho:", slotUrl);
+      const { data } = await fetchZoho(slotUrl, {}, 3, session);
+      const availableSlots = data?.response?.returnvalue?.data;
+
+      if (Array.isArray(availableSlots) && availableSlots.length > 0) {
+        // Cache all slots for this date
+        session.allSlotsForCurrentDate = availableSlots;
+        session.currentSlotDate = dateStr;
+        session.currentDateSlotIndex = 0;
+      } else {
+        // No slots for this date, move to next day
+        session.allSlotsForCurrentDate = null;
+        currentDate.setDate(currentDate.getDate() + 1);
+        session.currentSlotDate = formatDateForZoho(currentDate);
+        session.currentDateSlotIndex = 0;
+        continue;
+      }
     }
 
-    currentDate.setDate(currentDate.getDate() + 1);
+    // Get slots from current date starting from current index
+    const startIndex = session.currentDateSlotIndex || 0;
+    const remainingSlots = session.allSlotsForCurrentDate.slice(startIndex);
+
+    // Add slots up to the limit
+    for (let i = 0; i < remainingSlots.length && slots.length < limit; i++) {
+      const timeSlot = remainingSlots[i];
+      const uniqueId = `slot_${slotCounter}_${dateStr}_${timeSlot.replace(
+        /[:\s]/g,
+        "-"
+      )}`;
+      slotCounter++;
+
+      slots.push({
+        id: uniqueId,
+        label: `${dateStr} ${timeSlot}`,
+        date: dateStr,
+        time: timeSlot,
+      });
+
+      // Update the index for this date
+      session.currentDateSlotIndex = startIndex + i + 1;
+    }
+
+    // If we've shown all slots for this date, move to next date
+    if (session.currentDateSlotIndex >= session.allSlotsForCurrentDate.length) {
+      session.allSlotsForCurrentDate = null;
+      session.currentDateSlotIndex = 0;
+      currentDate.setDate(currentDate.getDate() + 1);
+      session.currentSlotDate = formatDateForZoho(currentDate);
+    } else {
+      // Still have more slots in current date, so stop here
+      break;
+    }
   }
 
   return {
     slots,
     nextSearchDate: currentDate,
+    hasMore: slots.length === limit, // Indicate if there might be more slots
   };
 }
 
@@ -1042,8 +1094,28 @@ app.post("/webhook", async (req, res) => {
       if (slotId === "show_more_slots") {
         await sendWhatsApp(from, waSearchingMessage(session));
 
-        const startDate = new Date(session.searchStartDate);
-        const { slots, nextSearchDate } = await findNextAvailableSlots(
+        const startDate = session.currentSlotDate
+          ? (() => {
+              const [day, month, year] = session.currentSlotDate.split("-");
+              const monthIndex = [
+                "Jan",
+                "Feb",
+                "Mar",
+                "Apr",
+                "May",
+                "Jun",
+                "Jul",
+                "Aug",
+                "Sep",
+                "Oct",
+                "Nov",
+                "Dec",
+              ].indexOf(month);
+              return new Date(year, monthIndex, parseInt(day));
+            })()
+          : new Date();
+
+        const { slots, hasMore } = await findNextAvailableSlots(
           session,
           startDate,
           3,
@@ -1053,25 +1125,29 @@ app.post("/webhook", async (req, res) => {
         if (slots.length === 0) {
           await sendWhatsApp(from, waError(session, "noMoreSlots"));
           session.step = "AWAIT_MAIN";
+          // Reset tracking
+          delete session.currentSlotDate;
+          delete session.currentDateSlotIndex;
+          delete session.allSlotsForCurrentDate;
           return res.sendStatus(200);
         }
 
-        session.searchStartDate = nextSearchDate.toISOString();
-        await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
+        await sendWhatsApp(
+          from,
+          waSlotListWithShowMore(session, slots, hasMore)
+        );
         return res.sendStatus(200);
       }
 
-      // User selected a specific slot - UPDATED PARSING
-      // Parse: slot_0_16-Oct-2025_10-15-AM or slot_1_16-Oct-2025_02-30-PM
+      // User selected a specific slot
       const parts = slotId.split("_");
       if (parts.length < 4) {
         await sendWhatsApp(from, waError(session, "invalidSlot"));
         return res.sendStatus(200);
       }
 
-      // Extract: [slot, counter, date, time...]
-      const dateStr = parts[2]; // "16-Oct-2025"
-      const timeParts = parts.slice(3).join(" ").replace(/-/g, ":"); // "10:15 AM"
+      const dateStr = parts[2];
+      const timeParts = parts.slice(3).join(" ").replace(/-/g, ":");
 
       session.selectedSlot = {
         id: slotId,
@@ -1080,6 +1156,11 @@ app.post("/webhook", async (req, res) => {
         time: timeParts,
       };
       session.selectedDate = { label: dateStr };
+
+      // Reset slot tracking
+      delete session.currentSlotDate;
+      delete session.currentDateSlotIndex;
+      delete session.allSlotsForCurrentDate;
 
       await sendWhatsApp(from, waTextPrompt(session, "enterName"));
       session.step = "AWAIT_NAME";
