@@ -880,6 +880,45 @@ app.post("/webhook", async (req, res) => {
       session.selectedService = service;
 
       const stype = (service.service_type || "").toUpperCase();
+
+      // Handle COLLECTIVE/GROUP bookings
+      if (stype === "COLLECTIVE" || stype === "GROUP") {
+        if (
+          Array.isArray(service.assigned_groups) &&
+          service.assigned_groups.length > 0
+        ) {
+          // If only one group, auto-select it
+          if (service.assigned_groups.length === 1) {
+            session.selectedGroup = service.assigned_groups[0].id;
+          } else {
+            // Multiple groups - let user select (future enhancement)
+            session.selectedGroup = service.assigned_groups[0].id;
+          }
+        }
+
+        // Skip staff selection for collective bookings, go directly to slot search
+        await sendWhatsApp(from, waSearchingMessage(session));
+        const today = new Date();
+        const { slots, nextSearchDate } = await findNextAvailableSlots(
+          session,
+          today,
+          3,
+          60
+        );
+
+        if (slots.length === 0) {
+          await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
+          session.step = "AWAIT_MAIN";
+          return res.sendStatus(200);
+        }
+
+        session.searchStartDate = nextSearchDate.toISOString();
+        session.step = "AWAIT_SLOT";
+        await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
+        return res.sendStatus(200);
+      }
+
+      // Handle regular APPOINTMENT with staff selection
       if (
         (stype === "APPOINTMENT" ||
           stype === "ONE-ON-ONE" ||
@@ -900,9 +939,8 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // NEW LOGIC: Immediately search for available slots
+      // For CLASS or other types, proceed directly to slot search
       await sendWhatsApp(from, waSearchingMessage(session));
-
       const today = new Date();
       const { slots, nextSearchDate } = await findNextAvailableSlots(
         session,
@@ -1530,14 +1568,26 @@ async function createZohoAppointment(session, userPhone) {
   const serviceType = (
     session.selectedService.service_type || ""
   ).toUpperCase();
-  const bookingType = serviceType === "RESOURCE" ? "resource" : "appointment";
 
-  if (session.selectedStaff) {
-    if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
-      formData.append("group_id", session.selectedStaff);
-    } else if (serviceType === "RESOURCE") {
+  // For COLLECTIVE/GROUP bookings, use group_id instead of staff_id
+  if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
+    // For collective bookings, group_id is mandatory
+    if (session.selectedGroup) {
+      formData.append("group_id", session.selectedGroup);
+    } else if (session.selectedService.assigned_groups?.length > 0) {
+      // Use first assigned group if no group selected
+      formData.append(
+        "group_id",
+        session.selectedService.assigned_groups[0].id
+      );
+    }
+  } else if (serviceType === "RESOURCE") {
+    if (session.selectedStaff) {
       formData.append("resource_id", session.selectedStaff);
-    } else {
+    }
+  } else {
+    // Regular APPOINTMENT or CLASS
+    if (session.selectedStaff) {
       formData.append("staff_id", session.selectedStaff);
     }
   }
@@ -1620,7 +1670,12 @@ async function createZohoAppointment(session, userPhone) {
   const toTimeStr = `${toDay}-${toMonthName}-${toYear} ${toHour}:${toMinute}:00`;
 
   formData.append("from_time", fromTimeStr);
-  formData.append("to_time", toTimeStr);
+
+  // Only add to_time for non-collective bookings
+  if (serviceType !== "COLLECTIVE" && serviceType !== "GROUP") {
+    formData.append("to_time", toTimeStr);
+  }
+
   formData.append("timezone", "Asia/Kolkata");
 
   let notes = "Booked via WhatsApp";
@@ -1648,7 +1703,7 @@ async function createZohoAppointment(session, userPhone) {
     })
   );
 
-  // Updated logging to show ID type
+  // Updated logging
   const idType =
     serviceType === "COLLECTIVE" || serviceType === "GROUP"
       ? "group_id"
@@ -1659,11 +1714,13 @@ async function createZohoAppointment(session, userPhone) {
   log("Zoho Booking Params", {
     service_id: session.selectedService.id,
     service_type: serviceType,
-    booking_type: bookingType,
     id_type: idType,
-    id_value: session.selectedStaff,
+    id_value: session.selectedStaff || session.selectedGroup,
     from_time: fromTimeStr,
-    to_time: toTimeStr,
+    to_time:
+      serviceType === "COLLECTIVE" || serviceType === "GROUP"
+        ? "N/A"
+        : toTimeStr,
     timezone: "Asia/Kolkata",
     customer_details: {
       name: session.customerName,
