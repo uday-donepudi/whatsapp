@@ -482,14 +482,39 @@ async function findNextAvailableSlots(
   endDate.setDate(endDate.getDate() + maxDaysToScan);
   let slotCounter = 0;
 
+  // Determine which staff/group/resource to use
+  const serviceType = (
+    session.selectedService.service_type || ""
+  ).toUpperCase();
+  let staffId = session.selectedStaff;
+  let groupId = session.selectedGroup;
+
+  // If no staff selected, use default from service
+  if (!staffId && !groupId) {
+    if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
+      groupId = session.selectedService.assigned_groups?.[0]?.id;
+    } else {
+      staffId = session.selectedService.assigned_staffs?.[0];
+    }
+  }
+
   while (slots.length < limit && currentDate <= endDate) {
     const dateStr = formatDateForZoho(currentDate);
 
     let slotUrl = `${ZOHO_BASE}/availableslots?service_id=${serviceId}&selected_date=${dateStr}`;
-    if (session.selectedStaff) {
-      slotUrl += `&staff_id=${session.selectedStaff}`;
+
+    // Add staff_id or group_id based on service type
+    if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
+      if (groupId) {
+        slotUrl += `&group_id=${groupId}`;
+      }
+    } else {
+      if (staffId) {
+        slotUrl += `&staff_id=${staffId}`;
+      }
     }
 
+    console.log("Fetching slots from Zoho:", slotUrl);
     const { data } = await fetchZoho(slotUrl, {}, 3, session);
     const availableSlots = data?.response?.returnvalue?.data;
 
@@ -1592,11 +1617,20 @@ async function createZohoAppointment(session, userPhone) {
   } else if (serviceType === "RESOURCE") {
     if (session.selectedStaff) {
       formData.append("resource_id", session.selectedStaff);
+    } else if (session.selectedService.assigned_staffs?.length > 0) {
+      // Use first assigned resource as default
+      formData.append(
+        "resource_id",
+        session.selectedService.assigned_staffs[0]
+      );
     }
   } else {
     // Regular APPOINTMENT or CLASS
     if (session.selectedStaff) {
       formData.append("staff_id", session.selectedStaff);
+    } else if (session.selectedService.assigned_staffs?.length > 0) {
+      // Use first assigned staff as default
+      formData.append("staff_id", session.selectedService.assigned_staffs[0]);
     }
   }
 
@@ -1718,11 +1752,18 @@ async function createZohoAppointment(session, userPhone) {
       ? "resource_id"
       : "staff_id";
 
+  // Get the actual ID value being used
+  const idValue =
+    session.selectedStaff ||
+    session.selectedGroup ||
+    session.selectedService.assigned_staffs?.[0] ||
+    session.selectedService.assigned_groups?.[0]?.id;
+
   log("Zoho Booking Params", {
     service_id: session.selectedService.id,
     service_type: serviceType,
     id_type: idType,
-    id_value: session.selectedStaff || session.selectedGroup,
+    id_value: idValue,
     from_time: fromTimeStr,
     to_time: toTimeStr,
     duration: `${duration} mins`,
