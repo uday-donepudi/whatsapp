@@ -939,7 +939,15 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // For CLASS or other types, proceed directly to slot search
+      // For CLASS or other types without staff selection
+      // Auto-select the first assigned staff if available
+      if (
+        Array.isArray(service.assigned_staffs) &&
+        service.assigned_staffs.length > 0
+      ) {
+        session.selectedStaff = service.assigned_staffs[0];
+      }
+
       await sendWhatsApp(from, waSearchingMessage(session));
       const today = new Date();
       const { slots, nextSearchDate } = await findNextAvailableSlots(
