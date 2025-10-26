@@ -692,7 +692,6 @@ async function createStripePaymentLink(session, service) {
           quantity: 1,
         },
       ],
-      billing_address_collection: "required",
       metadata: {
         session_id: session.id,
         service_id: service.id,
