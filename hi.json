@@ -38,6 +38,8 @@
   "enterEmailForLookup": "कृपया अपनी बुकिंग के लिए उपयोग किया गया ईमेल पता दर्ज करें:",
   "noAppointmentsFound": "क्षमा करें, इस ईमेल के लिए कोई सक्रिय मुलाकात नहीं मिली।",
   "selectAppointment": "कृपया प्रबंधित करने के लिए एक मुलाकात चुनें:",
+  "selectAppointmentToReschedule": "कृपया पुनर्निर्धारित करने के लिए एक मुलाकात चुनें:",
+  "selectAppointmentToCancel": "कृपया रद्द करने के लिए एक मुलाकात चुनें:",
   "chooseAppointment": "मुलाकात चुनें",
   "appointments": "आपकी मुलाकातें",
   "rescheduleSuccess": "✅ आपकी मुलाकात सफलतापूर्वक पुनर्निर्धारित की गई है।",

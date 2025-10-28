@@ -38,6 +38,8 @@
   "enterEmailForLookup": "Please enter the email address used for your bookings:",
   "noAppointmentsFound": "Sorry, no active appointments found for this email.",
   "selectAppointment": "Please select an appointment to manage:",
+  "selectAppointmentToReschedule": "Please select an appointment to reschedule:",
+  "selectAppointmentToCancel": "Please select an appointment to cancel:",
   "chooseAppointment": "Choose Appointment",
   "appointments": "Your Appointments",
   "rescheduleSuccess": "✅ Your appointment has been successfully rescheduled.",

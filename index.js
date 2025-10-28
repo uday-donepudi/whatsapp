@@ -251,9 +251,9 @@ function waLanguageSelection() {
           {
             title: "Languages",
             rows: [
-              { id: "lang_en", title: "English", description: "English" },
-              { id: "lang_hi", title: "हिंदी", description: "Hindi" },
-              { id: "lang_te", title: "తెలుగు", description: "Telugu" },
+              { id: "lang_en", title: "English" },
+              { id: "lang_hi", title: "हिंदी" },
+              { id: "lang_te", title: "తెలుగు" },
             ],
           },
         ],
@@ -2207,60 +2207,48 @@ function waMyBookingsMenu(session) {
   };
 }
 
-function waAppointmentList(session, appointments, page, purpose) {
-  const start = page * 3;
-  const pageItems = appointments.slice(start, start + 3);
+function waAppointmentList(
+  session,
+  appointments,
+  page = 0,
+  purpose = "manage"
+) {
+  const perPage = 10;
+  const start = page * perPage;
+  const end = start + perPage;
+  const paginatedAppointments = appointments.slice(start, end);
+  const hasMore = end < appointments.length;
 
-  const rows = pageItems.map((appt) => {
-    // Parse the date and time
-    const dateTime = new Date(
-      appt.customer_booking_start_time || appt.start_time
-    );
+  const rows = paginatedAppointments.map((appt, idx) => ({
+    id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
+    title: appt.service_name.substring(0, 24),
+    description: `${appt.start_time} - ${appt.customer_name}`.substring(0, 72),
+  }));
 
-    // Format time only (e.g., "10:30 AM")
-    const timeStr = dateTime.toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
-
-    // Format date in shorter form (e.g., "24 Oct")
-    const dateStr = `${dateTime.getDate()} ${
-      [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ][dateTime.getMonth()]
-    }`;
-
-    return {
-      id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
-      title: timeStr, // Show only time in title (within 24 char limit)
-      description: `${appt.service_name}\n${dateStr}`, // Show service and date in description
-    };
-  });
-
-  if (start + 3 < appointments.length) {
+  if (hasMore) {
     rows.push({
       id: `show_more_appts_${purpose}_${page + 1}`,
       title: t(session, "showMore"),
+      description: "View more appointments",
     });
+  }
+
+  // Use different message based on purpose
+  let bodyText;
+  if (purpose === "reschedule") {
+    bodyText = t(session, "selectAppointmentToReschedule");
+  } else if (purpose === "cancel") {
+    bodyText = t(session, "selectAppointmentToCancel");
+  } else {
+    bodyText = t(session, "selectAppointment");
   }
 
   return {
     type: "interactive",
     interactive: {
       type: "list",
-      body: { text: t(session, "selectAppointment") },
+      header: { type: "text", text: t(session, "appointments") },
+      body: { text: bodyText },
       action: {
         button: t(session, "chooseAppointment"),
         sections: [
