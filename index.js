@@ -1254,42 +1254,70 @@ app.post("/webhook", async (req, res) => {
         }
       }
 
-      const { data } = await fetchZoho(slotUrl, {}, 3, session);
-      const slots = Array.isArray(data?.response?.returnvalue?.data)
-        ? data.response.returnvalue.data
-        : [];
+      log("Fetching slots from URL:", slotUrl); // ✅ Add debug log
 
-      if (!slots.length) {
+      try {
+        const { data } = await fetchZoho(slotUrl, {}, 3, session);
+
+        log("Slot API response:", JSON.stringify(data)); // ✅ Add debug log
+
+        const slots = Array.isArray(data?.response?.returnvalue?.data)
+          ? data.response.returnvalue.data
+          : [];
+
+        log("Parsed slots array:", slots); // ✅ Add debug log
+
+        if (!slots.length) {
+          await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
+          session.step = "AWAIT_DATE";
+          return res.sendStatus(200);
+        }
+
+        // ✅ Map slots - Zoho returns already formatted times like "09:00 AM"
+        session.slots = slots.map((timeStr, idx) => {
+          const slotObj = {
+            id: `slot_${dateObj.rawDate}_${timeStr.replace(
+              /[:\s]/g,
+              "-"
+            )}_${idx}`,
+            label: timeStr,
+            time: timeStr,
+            rawTime: timeStr,
+          };
+          log("Created slot object:", slotObj); // ✅ Add debug log
+          return slotObj;
+        });
+
+        log("Total slots created:", session.slots.length); // ✅ Add debug log
+
+        session.slotPage = 0;
+        session.step = "AWAIT_SLOT";
+
+        // ✅ Show first 9 slots with "Show more" option
+        const slotPageSize = 9;
+        const pageSlots = session.slots.slice(0, slotPageSize);
+
+        log("Page slots to display:", pageSlots); // ✅ Add debug log
+
+        const slotListMsg = waSlotList(session, pageSlots, dateObj.label);
+
+        if (session.slots.length > slotPageSize) {
+          slotListMsg.interactive.action.sections[0].rows.push({
+            id: "show_more_slots",
+            title: t(session, "showMore"),
+          });
+        }
+
+        log("Sending slot list message:", JSON.stringify(slotListMsg)); // ✅ Add debug log
+
+        await sendWhatsApp(from, slotListMsg);
+        return res.sendStatus(200);
+      } catch (error) {
+        log("Error fetching/processing slots:", error); // ✅ Add error log
         await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
         session.step = "AWAIT_DATE";
         return res.sendStatus(200);
       }
-
-      // ✅ Format slots with proper time formatting
-      session.slots = slots.map((timeStr, idx) => ({
-        id: `slot_${dateObj.rawDate}_${timeStr.replace(/[:\s]/g, "-")}_${idx}`,
-        label: formatTime(timeStr),
-        time: timeStr,
-        rawTime: timeStr,
-      }));
-
-      session.slotPage = 0;
-      session.step = "AWAIT_SLOT";
-
-      // ✅ Show first 9 slots with "Show more" option
-      const slotPageSize = 9;
-      const pageSlots = session.slots.slice(0, slotPageSize);
-      const slotListMsg = waSlotList(session, pageSlots, dateObj.label);
-
-      if (session.slots.length > slotPageSize) {
-        slotListMsg.interactive.action.sections[0].rows.push({
-          id: "show_more_slots",
-          title: t(session, "showMore"),
-        });
-      }
-
-      await sendWhatsApp(from, slotListMsg);
-      return res.sendStatus(200);
     }
 
     // ===========================
