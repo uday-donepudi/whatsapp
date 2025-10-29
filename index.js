@@ -892,7 +892,7 @@ app.post("/webhook", async (req, res) => {
       }
 
       if (btnId === "reschedule_btn") {
-        session.step = "AWAIT_RESCHEDULE_EMAIL";
+        session.step = "AWAIT_RESCHEDULE_PHONE";
         log(
           "RESCHEDULE pressed - sessionId:",
           session.id,
@@ -901,14 +901,13 @@ app.post("/webhook", async (req, res) => {
           "lang:",
           session.language
         );
-        log("Email prompt text:", t(session, "enterEmailForLookup"));
-        log("prompting for email for reschedule");
-        await sendWhatsApp(from, waTextPrompt(session, "enterEmailForLookup"));
+        // ✅ Changed from enterEmailForLookup to enterPhone
+        await sendWhatsApp(from, waTextPrompt(session, "enterPhone"));
         return res.sendStatus(200);
       }
 
       if (btnId === "cancel_btn") {
-        session.step = "AWAIT_CANCEL_EMAIL";
+        session.step = "AWAIT_CANCEL_PHONE";
         log(
           "CANCEL pressed - sessionId:",
           session.id,
@@ -917,8 +916,8 @@ app.post("/webhook", async (req, res) => {
           "lang:",
           session.language
         );
-        log("Email prompt text:", t(session, "enterEmailForLookup"));
-        await sendWhatsApp(from, waTextPrompt(session, "enterEmailForLookup"));
+        // ✅ Changed from enterEmailForLookup to enterPhone
+        await sendWhatsApp(from, waTextPrompt(session, "enterPhone"));
         return res.sendStatus(200);
       }
     }
@@ -1580,25 +1579,26 @@ app.post("/webhook", async (req, res) => {
     // Add these handlers AFTER the "HELP FLOW" section and BEFORE the "FALLBACK" section
 
     // ===========================
-    // RESCHEDULE FLOW: Email Input
+    // RESCHEDULE FLOW: Phone Input
     // ===========================
-    if (session.step === "AWAIT_RESCHEDULE_EMAIL" && msg.type === "text") {
-      const email = msg.text.body.trim();
-      if (!validateEmail(email)) {
-        session.emailAttempts = (session.emailAttempts || 0) + 1;
-        if (session.emailAttempts >= 3) {
+    if (session.step === "AWAIT_RESCHEDULE_PHONE" && msg.type === "text") {
+      const phone = msg.text.body.trim();
+      if (!validatePhone(phone)) {
+        session.phoneAttempts = (session.phoneAttempts || 0) + 1;
+        if (session.phoneAttempts >= 3) {
           await sendWhatsApp(from, waError(session, "bookingCancelled"));
           clearSession(from);
           return res.sendStatus(200);
         }
-        await sendWhatsApp(from, waTextPrompt(session, "invalidEmail"));
+        await sendWhatsApp(from, waTextPrompt(session, "invalidPhone"));
         return res.sendStatus(200);
       }
 
       // Show searching message
       await sendWhatsApp(from, waSearchingAppointments(session));
 
-      const appointments = await fetchZohoAppointments(session, email);
+      // ✅ Changed to use phone instead of email
+      const appointments = await fetchZohoAppointmentsByPhone(session, phone);
       if (!appointments.length) {
         await sendWhatsApp(from, waError(session, "noAppointmentsFound"));
         session.step = "AWAIT_MAIN";
@@ -1616,25 +1616,26 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
-    // CANCEL FLOW: Email Input
+    // CANCEL FLOW: Phone Input
     // ===========================
-    if (session.step === "AWAIT_CANCEL_EMAIL" && msg.type === "text") {
-      const email = msg.text.body.trim();
-      if (!validateEmail(email)) {
-        session.emailAttempts = (session.emailAttempts || 0) + 1;
-        if (session.emailAttempts >= 3) {
+    if (session.step === "AWAIT_CANCEL_PHONE" && msg.type === "text") {
+      const phone = msg.text.body.trim();
+      if (!validatePhone(phone)) {
+        session.phoneAttempts = (session.phoneAttempts || 0) + 1;
+        if (session.phoneAttempts >= 3) {
           await sendWhatsApp(from, waError(session, "bookingCancelled"));
           clearSession(from);
           return res.sendStatus(200);
         }
-        await sendWhatsApp(from, waTextPrompt(session, "invalidEmail"));
+        await sendWhatsApp(from, waTextPrompt(session, "invalidPhone"));
         return res.sendStatus(200);
       }
 
       // Show searching message
       await sendWhatsApp(from, waSearchingAppointments(session));
 
-      const appointments = await fetchZohoAppointments(session, email);
+      // ✅ Changed to use phone instead of email
+      const appointments = await fetchZohoAppointmentsByPhone(session, phone);
       if (!appointments.length) {
         await sendWhatsApp(from, waError(session, "noAppointmentsFound"));
         session.step = "AWAIT_MAIN";
@@ -2184,6 +2185,130 @@ async function createZohoDeskTicket(session) {
   }
 }
 
+// Update the phone prompt text prompts
+function waTextPrompt(session, key) {
+  return {
+    type: "text",
+    text: {
+      body: t(session, key),
+    },
+  };
+}
+
+// ✅ New function to fetch appointments by phone number instead of email
+async function fetchZohoAppointmentsByPhone(session, phone) {
+  try {
+    const zohoToken = await getSessionZohoToken(session);
+    const uniqueAppointments = new Set();
+    const startDate = new Date();
+    const oneWeekFromNow = new Date(startDate);
+    oneWeekFromNow.setDate(oneWeekFromNow.getDate() + 7);
+
+    // Format date helper
+    const formatDateForZoho = (date) => {
+      const monthNames = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      return `${String(date.getDate()).padStart(2, "0")}-${
+        monthNames[date.getMonth()]
+      }-${date.getFullYear()} ${String(date.getHours()).padStart(
+        2,
+        "0"
+      )}:${String(date.getMinutes()).padStart(2, "0")}:${String(
+        date.getSeconds()
+      ).padStart(2, "0")}`;
+    };
+
+    let currentDate = new Date(startDate);
+    let foundAppointments = [];
+
+    // Normalize phone number - remove any non-digits
+    const normalizedPhone = phone.replace(/\D/g, "");
+    log("Searching appointments with phone:", normalizedPhone);
+
+    while (currentDate <= oneWeekFromNow && foundAppointments.length < 3) {
+      const formattedDate = formatDateForZoho(currentDate);
+      log("Fetching appointments from date:", formattedDate);
+
+      const resp = await fetch(
+        "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Zoho-oauthtoken ${zohoToken}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: `data=${JSON.stringify({
+            customer_phone_number: normalizedPhone, // ✅ Changed from customer_email
+            from_time: formattedDate,
+          })}`,
+        }
+      );
+
+      const data = await resp.json();
+      log(
+        "Zoho fetch appointments by phone",
+        resp.status,
+        JSON.stringify(data)
+      );
+
+      if (
+        data?.response?.returnvalue?.response &&
+        Array.isArray(data.response.returnvalue.response)
+      ) {
+        const appointments = data.response.returnvalue.response;
+
+        // Filter active appointments
+        const activeAppointments = appointments.filter((appt) => {
+          const appointmentDate = new Date(
+            appt.customer_booking_start_time || appt.start_time
+          );
+          const now = new Date();
+          return (
+            appointmentDate > now &&
+            !["cancel", "completed"].includes(appt.status) &&
+            !uniqueAppointments.has(appt.booking_id)
+          );
+        });
+
+        // Add unique appointments
+        for (const appt of activeAppointments) {
+          if (foundAppointments.length >= 3) break;
+          if (!uniqueAppointments.has(appt.booking_id)) {
+            uniqueAppointments.add(appt.booking_id);
+            foundAppointments.push(appt);
+          }
+        }
+      }
+
+      // Move to next day if haven't found 3 appointments yet
+      if (foundAppointments.length < 3) {
+        currentDate.setDate(currentDate.getDate() + 1);
+        // Small delay to prevent rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+
+    log("Found appointments by phone:", foundAppointments.length);
+    return foundAppointments;
+  } catch (err) {
+    log("Zoho fetch appointments by phone error:", err);
+    return [];
+  }
+}
+
+// ✅ Keep the old email function for backward compatibility if needed
 async function fetchZohoAppointments(session, email) {
   try {
     const zohoToken = await getSessionZohoToken(session);
@@ -2286,191 +2411,4 @@ async function fetchZohoAppointments(session, email) {
     log("Zoho fetch appointments error:", err);
     return [];
   }
-}
-
-async function rescheduleZohoAppointment(
-  session,
-  booking_id,
-  staff_id,
-  start_time
-) {
-  try {
-    const zohoToken = await getSessionZohoToken(session);
-    const formData = new FormData();
-
-    // Add booking ID and start time
-    formData.append("booking_id", booking_id);
-    formData.append("start_time", start_time);
-
-    // Check service type and append appropriate ID
-    const serviceType = (
-      session.selectedService?.service_type || ""
-    ).toUpperCase();
-
-    if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
-      formData.append("group_id", session.selectedGroup || staff_id);
-    } else if (serviceType === "RESOURCE") {
-      formData.append("resource_id", staff_id);
-    } else {
-      formData.append("staff_id", staff_id);
-    }
-
-    log("Reschedule params:", {
-      booking_id,
-      service_type: serviceType,
-      id_used:
-        serviceType === "COLLECTIVE" || serviceType === "GROUP"
-          ? `group_id: ${session.selectedGroup || staff_id}`
-          : serviceType === "RESOURCE"
-          ? `resource_id: ${staff_id}`
-          : `staff_id: ${staff_id}`,
-      start_time,
-    });
-
-    const resp = await fetch(
-      "https://www.zohoapis.in/bookings/v1/json/rescheduleappointment",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        },
-        body: formData,
-      }
-    );
-
-    const data = await resp.json();
-    log("Zoho reschedule appointment", resp.status, JSON.stringify(data));
-    return data?.response?.status === "success";
-  } catch (err) {
-    log("Zoho reschedule error:", err);
-    return false;
-  }
-}
-
-async function cancelZohoAppointment(session, booking_id) {
-  try {
-    const zohoToken = await getSessionZohoToken(session);
-    const formData = new FormData();
-    formData.append("booking_id", booking_id);
-    formData.append("action", "cancel");
-
-    const resp = await fetch(
-      "https://www.zohoapis.in/bookings/v1/json/updateappointment",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        },
-        body: formData,
-      }
-    );
-
-    const data = await resp.json();
-    log("Zoho cancel appointment", resp.status, JSON.stringify(data));
-    return data?.response?.status === "success";
-  } catch (err) {
-    log("Zoho cancel error:", err);
-    return false;
-  }
-}
-
-// After existing wa* helper functions...
-
-function waMyBookingsMenu(session) {
-  return {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: { text: t(session, "myBookingsMenu") },
-      action: {
-        buttons: [
-          {
-            type: "reply",
-            reply: { id: "book_new_btn", title: t(session, "bookAppointment") },
-          },
-          {
-            type: "reply",
-            reply: { id: "reschedule_btn", title: t(session, "reschedule") },
-          },
-          {
-            type: "reply",
-            reply: { id: "cancel_btn", title: t(session, "cancel") },
-          },
-        ],
-      },
-    },
-  };
-}
-
-function waAppointmentList(
-  session,
-  appointments,
-  page = 0,
-  purpose = "manage"
-) {
-  const perPage = 10;
-  const start = page * perPage;
-  const end = start + perPage;
-  const paginatedAppointments = appointments.slice(start, end);
-  const hasMore = end < appointments.length;
-
-  const rows = paginatedAppointments.map((appt, idx) => ({
-    id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
-    title: appt.service_name.substring(0, 24),
-    description: `${appt.start_time} - ${appt.customer_name}`.substring(0, 72),
-  }));
-
-  if (hasMore) {
-    rows.push({
-      id: `show_more_appts_${purpose}_${page + 1}`,
-      title: t(session, "showMore"),
-      description: "View more appointments",
-    });
-  }
-
-  // Use different message based on purpose
-  let bodyText;
-  if (purpose === "reschedule") {
-    bodyText = t(session, "selectAppointmentToReschedule");
-  } else if (purpose === "cancel") {
-    bodyText = t(session, "selectAppointmentToCancel");
-  } else {
-    bodyText = t(session, "selectAppointment");
-  }
-
-  return {
-    type: "interactive",
-    interactive: {
-      type: "list",
-      header: { type: "text", text: t(session, "appointments") },
-      body: { text: bodyText },
-      action: {
-        button: t(session, "chooseAppointment"),
-        sections: [
-          {
-            title: t(session, "appointments"),
-            rows,
-          },
-        ],
-      },
-    },
-  };
-}
-
-function waSuccessMessage(session, messageKey) {
-  return {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: { text: t(session, messageKey) },
-      action: {
-        buttons: [
-          {
-            type: "reply",
-            reply: { id: "home_btn", title: t(session, "home") },
-          },
-        ],
-      },
-    },
-  };
 }
