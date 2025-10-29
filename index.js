@@ -2213,3 +2213,281 @@ async function createZohoDeskTicket(session) {
     return null;
   }
 }
+
+// Add these functions after the waSearchingAppointments function and before the webhook handlers
+
+// ✅ New function to fetch appointments by phone number instead of email
+async function fetchZohoAppointmentsByPhone(session, phone) {
+  try {
+    const zohoToken = await getSessionZohoToken(session);
+    const uniqueAppointments = new Set();
+    const startDate = new Date();
+    const oneWeekFromNow = new Date(startDate);
+    oneWeekFromNow.setDate(oneWeekFromNow.getDate() + 7);
+
+    // Format date helper
+    const formatDateForZohoFetch = (date) => {
+      const monthNames = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      return `${String(date.getDate()).padStart(2, "0")}-${
+        monthNames[date.getMonth()]
+      }-${date.getFullYear()} ${String(date.getHours()).padStart(
+        2,
+        "0"
+      )}:${String(date.getMinutes()).padStart(2, "0")}:${String(
+        date.getSeconds()
+      ).padStart(2, "0")}`;
+    };
+
+    let currentDate = new Date(startDate);
+    let foundAppointments = [];
+
+    // Normalize phone number - remove any non-digits
+    const normalizedPhone = phone.replace(/\D/g, "");
+    log("Searching appointments with phone:", normalizedPhone);
+
+    while (currentDate <= oneWeekFromNow && foundAppointments.length < 3) {
+      const formattedDate = formatDateForZohoFetch(currentDate);
+      log("Fetching appointments from date:", formattedDate);
+
+      const resp = await fetch(
+        "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Zoho-oauthtoken ${zohoToken}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: `data=${JSON.stringify({
+            customer_phone_number: normalizedPhone,
+            from_time: formattedDate,
+          })}`,
+        }
+      );
+
+      const data = await resp.json();
+      log(
+        "Zoho fetch appointments by phone",
+        resp.status,
+        JSON.stringify(data)
+      );
+
+      if (
+        data?.response?.returnvalue?.response &&
+        Array.isArray(data.response.returnvalue.response)
+      ) {
+        const appointments = data.response.returnvalue.response;
+
+        // Filter active appointments
+        const activeAppointments = appointments.filter((appt) => {
+          const appointmentDate = new Date(
+            appt.customer_booking_start_time || appt.start_time
+          );
+          const now = new Date();
+          return (
+            appointmentDate > now &&
+            !["cancel", "completed"].includes(appt.status) &&
+            !uniqueAppointments.has(appt.booking_id)
+          );
+        });
+
+        // Add unique appointments
+        for (const appt of activeAppointments) {
+          if (foundAppointments.length >= 3) break;
+          if (!uniqueAppointments.has(appt.booking_id)) {
+            uniqueAppointments.add(appt.booking_id);
+            foundAppointments.push(appt);
+          }
+        }
+      }
+
+      // Move to next day if haven't found 3 appointments yet
+      if (foundAppointments.length < 3) {
+        currentDate.setDate(currentDate.getDate() + 1);
+        // Small delay to prevent rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+
+    log("Found appointments by phone:", foundAppointments.length);
+    return foundAppointments;
+  } catch (err) {
+    log("Zoho fetch appointments by phone error:", err);
+    return [];
+  }
+}
+
+function waAppointmentList(session, appointments, page, purpose) {
+  const pageSize = 10;
+  const start = page * pageSize;
+  const end = start + pageSize;
+  const pageAppointments = appointments.slice(start, end);
+
+  const rows = pageAppointments.map((appt) => {
+    const startTime = appt.customer_booking_start_time || appt.start_time;
+    const dateObj = new Date(startTime);
+    const dateStr = formatDate(dateObj);
+    const timeStr = dateObj.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    });
+
+    return {
+      id: `${purpose}_appt_${appt.booking_id}_${appt.service_id}_${appt.staff_id}`,
+      title: `${appt.service_name || "Appointment"}`.slice(0, 24),
+      description: `${dateStr} ${timeStr}`,
+    };
+  });
+
+  // Add "Show More" button if there are more appointments
+  if (appointments.length > end) {
+    rows.push({
+      id: `show_more_appts_${purpose}_${page + 1}`,
+      title: t(session, "showMore"),
+    });
+  }
+
+  const bodyText =
+    purpose === "reschedule"
+      ? t(session, "selectAppointmentToReschedule")
+      : t(session, "selectAppointmentToCancel");
+
+  return {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: bodyText },
+      action: {
+        button: t(session, "chooseAppointment"),
+        sections: [
+          {
+            title: t(session, "appointments"),
+            rows,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function waSuccessMessage(session, messageKey) {
+  return {
+    type: "text",
+    text: {
+      body: `✅ ${t(session, messageKey)}`,
+    },
+  };
+}
+
+async function cancelZohoAppointment(session, bookingId) {
+  try {
+    const zohoToken = await getSessionZohoToken(session);
+
+    const resp = await fetch(
+      `${ZOHO_BASE}/appointment?booking_id=${bookingId}`,
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Zoho-oauthtoken ${zohoToken}`,
+        },
+      }
+    );
+
+    const data = await resp.json();
+    log("Zoho cancel appointment", resp.status, JSON.stringify(data));
+
+    return resp.status === 200 && data?.response?.status === "success";
+  } catch (err) {
+    log("Zoho cancel appointment error:", err);
+    return false;
+  }
+}
+
+async function rescheduleZohoAppointment(
+  session,
+  bookingId,
+  staffId,
+  startTime
+) {
+  try {
+    const zohoToken = await getSessionZohoToken(session);
+
+    // Calculate end time based on service duration
+    let duration = 30; // default
+    if (session.selectedService?.duration) {
+      const match = session.selectedService.duration.match(/(\d+)/);
+      if (match) duration = parseInt(match[1], 10);
+    }
+
+    const startDate = new Date(startTime);
+    const endDate = new Date(startDate.getTime() + duration * 60000);
+
+    const formatZohoDateTime = (date) => {
+      const day = String(date.getDate()).padStart(2, "0");
+      const monthNames = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      const month = monthNames[date.getMonth()];
+      const year = date.getFullYear();
+      const hour = String(date.getHours()).padStart(2, "0");
+      const minute = String(date.getMinutes()).padStart(2, "0");
+      return `${day}-${month}-${year} ${hour}:${minute}:00`;
+    };
+
+    const endTime = formatZohoDateTime(endDate);
+
+    const formData = new FormData();
+    formData.append("booking_id", bookingId);
+    formData.append("start_time", startTime);
+    formData.append("end_time", endTime);
+    formData.append("staff_id", staffId);
+
+    log("Zoho reschedule params:", {
+      booking_id: bookingId,
+      start_time: startTime,
+      end_time: endTime,
+      staff_id: staffId,
+    });
+
+    const resp = await fetch(`${ZOHO_BASE}/reschedulebooking`, {
+      method: "POST",
+      headers: {
+        Authorization: `Zoho-oauthtoken ${zohoToken}`,
+      },
+      body: formData,
+    });
+
+    const data = await resp.json();
+    log("Zoho reschedule appointment", resp.status, JSON.stringify(data));
+
+    return resp.status === 200 && data?.response?.status === "success";
+  } catch (err) {
+    log("Zoho reschedule appointment error:", err);
+    return false;
+  }
+}
