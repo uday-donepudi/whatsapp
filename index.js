@@ -714,6 +714,25 @@ function waSearchingAppointments(session) {
   };
 }
 
+// Add new helper functions after waSearchingMessage
+function waSearchingDates(session) {
+  return {
+    type: "text",
+    text: {
+      body: "🔍 " + t(session, "searchingDates"),
+    },
+  };
+}
+
+function waSearchingSlots(session) {
+  return {
+    type: "text",
+    text: {
+      body: "🔍 " + t(session, "searchingSlots"),
+    },
+  };
+}
+
 // Add payment-related functions
 async function createStripePaymentLink(session, service) {
   if (!stripe) {
@@ -1141,8 +1160,8 @@ app.post("/webhook", async (req, res) => {
 
       session.selectedMonth = monthObj;
 
-      // ✅ Fetch available dates for the selected month
-      await sendWhatsApp(from, waSearchingMessage(session));
+      // ✅ Show searching dates message
+      await sendWhatsApp(from, waSearchingDates(session));
 
       const { year, month } = monthObj;
       const lastDay = new Date(year, month, 0).getDate();
@@ -1262,8 +1281,8 @@ app.post("/webhook", async (req, res) => {
 
       session.selectedDate = dateObj;
 
-      // ✅ Fetch slots for the selected date
-      await sendWhatsApp(from, waSearchingMessage(session));
+      // ✅ Show searching slots message (changed from generic searching)
+      await sendWhatsApp(from, waSearchingSlots(session));
 
       const serviceId = session.selectedService.id;
       const serviceType = (
@@ -1773,7 +1792,8 @@ app.post("/webhook", async (req, res) => {
 
         session.step = "AWAIT_RESCHEDULE_SLOT";
 
-        await sendWhatsApp(from, waSearchingMessage(session));
+        // ✅ Show searching slots message for reschedule
+        await sendWhatsApp(from, waSearchingSlots(session));
 
         const today = new Date();
         const { slots, nextSearchDate } = await findNextAvailableSlots(
