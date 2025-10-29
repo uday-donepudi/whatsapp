@@ -37,7 +37,7 @@
   "enterPhone": "Enter 10-digit mobile number.",
   "invalidPhone": "Invalid number. Use 10 digits (e.g., 9xxxxxxxxx).",
   "enterEmailForLookup": "Enter booking email.",
-  "noAppointmentsFound": "No upcoming appointments found. Try another email or book new.",
+  "noAppointmentsFound": "No upcoming appointments found. Try another phone number or book new.",
   "selectAppointment": "Select an appointment:",
   "selectAppointmentToReschedule": "Choose appointment to reschedule.",
   "selectAppointmentToCancel": "Choose appointment to cancel.",

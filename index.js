@@ -2139,36 +2139,32 @@ async function fetchZohoAppointmentsByPhone(session, phone) {
 
     let foundAppointments = [];
 
-    // Normalize phone number - remove any non-digits
-    let normalizedPhone = phone.replace(/\D/g, "");
+    // ✅ Prepare phone variants: exact + normalized versions
+    const normalizedPhone = phone.replace(/\D/g, ""); // Remove non-digits
 
-    // ✅ If phone is 10 digits, try with 91 prefix
-    if (normalizedPhone.length === 10) {
-      normalizedPhone = "91" + normalizedPhone;
-    }
-
-    log("🔍 Searching appointments for 30 days");
-    log("Phone variants to try:", normalizedPhone, phone.trim());
-
-    // ✅ Try searching with different phone formats
+    // Build all possible variants
     const phoneVariants = [
-      normalizedPhone,
-      normalizedPhone.startsWith("91")
-        ? normalizedPhone.substring(2)
-        : "91" + normalizedPhone,
-      phone.trim(), // Original format
-      `+${normalizedPhone}`, // With + prefix
-      `+91${
-        normalizedPhone.startsWith("91")
-          ? normalizedPhone.substring(2)
-          : normalizedPhone
-      }`, // +91 format
+      phone.trim(), // ✅ Exact as entered
+      normalizedPhone, // Just digits
     ];
 
-    // Remove duplicates
-    const uniquePhoneVariants = [...new Set(phoneVariants)];
+    // Add with country code if it's 10 digits
+    if (normalizedPhone.length === 10) {
+      phoneVariants.push("91" + normalizedPhone);
+      phoneVariants.push("+91" + normalizedPhone);
+    }
 
-    log("📞 Trying phone variants:", uniquePhoneVariants);
+    // Add without country code if it starts with 91
+    if (normalizedPhone.startsWith("91") && normalizedPhone.length === 12) {
+      phoneVariants.push(normalizedPhone.substring(2));
+      phoneVariants.push("+" + normalizedPhone);
+    }
+
+    // Remove duplicates and empty values
+    const uniquePhoneVariants = [...new Set(phoneVariants.filter((p) => p))];
+
+    log("🔍 Searching appointments for 30 days");
+    log("📞 Phone variants to try:", uniquePhoneVariants);
 
     for (const phoneVariant of uniquePhoneVariants) {
       log(`\n--- Trying phone variant: ${phoneVariant} ---`);
@@ -2257,29 +2253,18 @@ async function fetchZohoAppointmentsByPhone(session, phone) {
           }
         }
 
-        // If we found appointments with this phone variant, stop trying other variants
-        if (foundAppointments.length > 0) {
-          log(
-            `\n🎯 Found ${foundAppointments.length} appointments with phone: ${phoneVariant}`
-          );
-          log(`📊 Searched ${daysSearched} days out of 30 possible days`);
-          break;
-        }
+        // ✅ Continue searching even if we found appointments with this variant
+        // Don't break - we want to try all variants
 
         // Move to next day
         currentDate.setDate(currentDate.getDate() + 1);
 
-        // Small delay to prevent rate limiting (reduced to 300ms)
+        // Small delay to prevent rate limiting
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // If we found appointments, stop trying other phone variants
-      if (foundAppointments.length > 0) {
-        break;
-      }
-
       log(
-        `❌ No appointments found with phone variant: ${phoneVariant} (searched ${daysSearched} days)`
+        `📊 Variant ${phoneVariant}: Found ${foundAppointments.length} appointments after searching ${daysSearched} days`
       );
     }
 
@@ -2287,7 +2272,7 @@ async function fetchZohoAppointmentsByPhone(session, phone) {
 
     if (foundAppointments.length === 0) {
       log(
-        "💡 Suggestion: Check if the phone number in Zoho Bookings matches one of these formats:",
+        "💡 No appointments found. Tried these phone formats:",
         uniquePhoneVariants
       );
     }
