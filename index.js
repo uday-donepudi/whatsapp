@@ -811,9 +811,24 @@ function waPaymentRequired(session, paymentUrl, service) {
 
 function waPaymentPending(session) {
   return {
-    type: "text",
-    text: {
-      body: t(session, "paymentPending"),
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text: t(session, "paymentPending"),
+      },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "payment_done", title: t(session, "paid") },
+          },
+          {
+            type: "reply",
+            reply: { id: "cancel_booking", title: t(session, "cancel") },
+          },
+        ],
+      },
     },
   };
 }
@@ -1645,11 +1660,34 @@ app.post("/webhook", async (req, res) => {
       // Show searching message
       await sendWhatsApp(from, waSearchingAppointments(session));
 
+      // Store the phone number for this session
+      session.customerPhone = phone;
+
       // ✅ Changed to use phone instead of email
       const appointments = await fetchZohoAppointmentsByPhone(session, phone);
+
+      log("Total appointments found:", appointments.length); // Add debug log
+
       if (!appointments.length) {
-        await sendWhatsApp(from, waError(session, "noAppointmentsFound"));
-        session.step = "AWAIT_MAIN";
+        // ✅ Show proper error message and go back to booking menu
+        await sendWhatsApp(from, {
+          type: "interactive",
+          interactive: {
+            type: "button",
+            body: {
+              text: `❌ ${t(session, "noAppointmentsFound")}`,
+            },
+            action: {
+              buttons: [
+                {
+                  type: "reply",
+                  reply: { id: "back_to_menu", title: t(session, "home") },
+                },
+              ],
+            },
+          },
+        });
+        session.step = "AWAIT_ERROR_RESPONSE";
         return res.sendStatus(200);
       }
 
@@ -1682,11 +1720,34 @@ app.post("/webhook", async (req, res) => {
       // Show searching message
       await sendWhatsApp(from, waSearchingAppointments(session));
 
+      // Store the phone number for this session
+      session.customerPhone = phone;
+
       // ✅ Changed to use phone instead of email
       const appointments = await fetchZohoAppointmentsByPhone(session, phone);
+
+      log("Total appointments found:", appointments.length); // Add debug log
+
       if (!appointments.length) {
-        await sendWhatsApp(from, waError(session, "noAppointmentsFound"));
-        session.step = "AWAIT_MAIN";
+        // ✅ Show proper error message and go back to booking menu
+        await sendWhatsApp(from, {
+          type: "interactive",
+          interactive: {
+            type: "button",
+            body: {
+              text: `❌ ${t(session, "noAppointmentsFound")}`,
+            },
+            action: {
+              buttons: [
+                {
+                  type: "reply",
+                  reply: { id: "back_to_menu", title: t(session, "home") },
+                },
+              ],
+            },
+          },
+        });
+        session.step = "AWAIT_ERROR_RESPONSE";
         return res.sendStatus(200);
       }
 
@@ -1701,212 +1762,15 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
-    // APPOINTMENT SELECTION (for reschedule/cancel)
+    // HANDLE ERROR RESPONSE (Back to Menu)
     // ===========================
     if (
-      (session.step === "AWAIT_APPOINTMENT_LIST_RESCHEDULE" ||
-        session.step === "AWAIT_APPOINTMENT_LIST_CANCEL") &&
+      session.step === "AWAIT_ERROR_RESPONSE" &&
       msg.type === "interactive" &&
-      msg.interactive.list_reply
+      msg.interactive.button_reply?.id === "back_to_menu"
     ) {
-      const replyId = msg.interactive.list_reply.id;
-
-      // Handle "Show More" pagination
-      if (replyId.startsWith("show_more_appts_")) {
-        const parts = replyId.split("_");
-        const purpose = parts[3];
-        const page = parseInt(parts[4]);
-        session.appointmentPage = page;
-        await sendWhatsApp(
-          from,
-          waAppointmentList(session, session.appointments, page, purpose)
-        );
-        return res.sendStatus(200);
-      }
-
-      // Handle appointment selection
-      const parts = replyId.split("_appt_");
-      if (parts.length !== 2) {
-        await sendWhatsApp(from, waError(session, "invalidSlot"));
-        return res.sendStatus(200);
-      }
-
-      const purpose = parts[0];
-      const ids = parts[1].split("_");
-
-      if (ids.length < 3) {
-        await sendWhatsApp(from, waError(session, "invalidSlot"));
-        return res.sendStatus(200);
-      }
-
-      const booking_id = ids[0];
-      const service_id = ids[1];
-      const staff_id = ids[2];
-
-      log("Appointment selection:", {
-        purpose,
-        booking_id,
-        service_id,
-        staff_id,
-      });
-
-      if (purpose === "cancel") {
-        const success = await cancelZohoAppointment(session, booking_id);
-        if (success) {
-          session.step = "AWAIT_MAIN";
-          await sendWhatsApp(from, waSuccessMessage(session, "cancelSuccess"));
-        } else {
-          await sendWhatsApp(from, waError(session, "cancelFailed"));
-        }
-        return res.sendStatus(200);
-      }
-
-      if (purpose === "reschedule") {
-        // Fetch service details to determine service type
-        const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
-        const { data } = await fetchZoho(serviceUrl, {}, 3, session);
-        const services = data?.response?.returnvalue?.data || [];
-        const service = services.find((s) => s.id === service_id);
-
-        if (!service) {
-          await sendWhatsApp(from, waError(session, "invalidService"));
-          return res.sendStatus(200);
-        }
-
-        const serviceType = (service.service_type || "").toUpperCase();
-
-        // Store reschedule data
-        session.rescheduleData = { booking_id, service_id, staff_id };
-        session.selectedService = service;
-
-        // Set appropriate staff/group based on service type
-        if (serviceType === "COLLECTIVE" || serviceType === "GROUP") {
-          // For collective bookings, use group_id
-          session.selectedGroup = service.assigned_groups?.[0]?.id || staff_id;
-          session.selectedStaff = null;
-        } else {
-          // For other types, use staff_id
-          session.selectedStaff = staff_id;
-          session.selectedGroup = null;
-        }
-
-        session.step = "AWAIT_RESCHEDULE_SLOT";
-
-        // ✅ Show searching slots message for reschedule
-        await sendWhatsApp(from, waSearchingSlots(session));
-
-        const today = new Date();
-        const { slots, nextSearchDate } = await findNextAvailableSlots(
-          session,
-          today,
-          3,
-          60
-        );
-
-        if (slots.length === 0) {
-          await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
-          session.step = "AWAIT_MAIN";
-          return res.sendStatus(200);
-        }
-
-        session.searchStartDate = nextSearchDate.toISOString();
-        await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
-        return res.sendStatus(200);
-      }
-    }
-
-    // ===========================
-    // RESCHEDULE SLOT SELECTION
-    // ===========================
-    if (
-      session.step === "AWAIT_RESCHEDULE_SLOT" &&
-      msg.type === "interactive" &&
-      msg.interactive.list_reply
-    ) {
-      const slotId = msg.interactive.list_reply.id;
-
-      if (slotId === "show_more_slots") {
-        await sendWhatsApp(from, waSearchingMessage(session));
-
-        const startDate = new Date(session.searchStartDate);
-        const { slots, nextSearchDate } = await findNextAvailableSlots(
-          session,
-          startDate,
-          3,
-          60
-        );
-
-        if (slots.length === 0) {
-          await sendWhatsApp(from, waError(session, "noMoreSlots"));
-          session.step = "AWAIT_MAIN";
-          return res.sendStatus(200);
-        }
-
-        session.searchStartDate = nextSearchDate.toISOString();
-        await sendWhatsApp(from, waSlotListWithShowMore(session, slots, true));
-        return res.sendStatus(200);
-      }
-
-      // Parse selected slot
-      const parts = slotId.split("_");
-      if (parts.length < 4) {
-        await sendWhatsApp(from, waError(session, "invalidSlot"));
-        return res.sendStatus(200);
-      }
-
-      const dateStr = parts[2]; // "16-Oct-2025"
-      const timeStr = parts.slice(3).join(" ").replace(/-/g, ":"); // "10:15 AM"
-
-      // Convert to format: "2025-10-28 14:00:00"
-      const [day, month, year] = dateStr.split("-");
-      const monthIndex = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ].indexOf(month);
-
-      // Parse time
-      const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
-      let hour = parseInt(timeMatch[1], 10);
-      const minute = timeMatch[2];
-      const ampm = timeMatch[3]?.toUpperCase();
-
-      if (ampm) {
-        if (ampm === "PM" && hour < 12) hour += 12;
-        if (ampm === "AM" && hour === 12) hour = 0;
-      }
-
-      const startTime = `${year}-${String(monthIndex + 1).padStart(
-        2,
-        "0"
-      )}-${day} ${String(hour).padStart(2, "0")}:${minute}:00`;
-
-      const success = await rescheduleZohoAppointment(
-        session,
-        session.rescheduleData.booking_id,
-        session.rescheduleData.staff_id,
-        startTime
-      );
-
-      if (success) {
-        await sendWhatsApp(
-          from,
-          waSuccessMessage(session, "rescheduleSuccess")
-        );
-      } else {
-        await sendWhatsApp(from, waError(session, "rescheduleFailed"));
-      }
-
-      clearSession(from);
+      session.step = "AWAIT_MAIN";
+      await sendWhatsApp(from, waMainMenu(session));
       return res.sendStatus(200);
     }
 
@@ -2242,8 +2106,10 @@ async function fetchZohoAppointmentsByPhone(session, phone) {
     const zohoToken = await getSessionZohoToken(session);
     const uniqueAppointments = new Set();
     const startDate = new Date();
-    const oneWeekFromNow = new Date(startDate);
-    oneWeekFromNow.setDate(oneWeekFromNow.getDate() + 7);
+
+    // ✅ Search 30 days ahead
+    const searchEndDate = new Date(startDate);
+    searchEndDate.setDate(searchEndDate.getDate() + 30);
 
     // Format date helper
     const formatDateForZohoFetch = (date) => {
@@ -2271,80 +2137,164 @@ async function fetchZohoAppointmentsByPhone(session, phone) {
       ).padStart(2, "0")}`;
     };
 
-    let currentDate = new Date(startDate);
     let foundAppointments = [];
 
     // Normalize phone number - remove any non-digits
-    const normalizedPhone = phone.replace(/\D/g, "");
-    log("Searching appointments with phone:", normalizedPhone);
+    let normalizedPhone = phone.replace(/\D/g, "");
 
-    while (currentDate <= oneWeekFromNow && foundAppointments.length < 3) {
-      const formattedDate = formatDateForZohoFetch(currentDate);
-      log("Fetching appointments from date:", formattedDate);
-
-      const resp = await fetch(
-        "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Zoho-oauthtoken ${zohoToken}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: `data=${JSON.stringify({
-            customer_phone_number: normalizedPhone,
-            from_time: formattedDate,
-          })}`,
-        }
-      );
-
-      const data = await resp.json();
-      log(
-        "Zoho fetch appointments by phone",
-        resp.status,
-        JSON.stringify(data)
-      );
-
-      if (
-        data?.response?.returnvalue?.response &&
-        Array.isArray(data.response.returnvalue.response)
-      ) {
-        const appointments = data.response.returnvalue.response;
-
-        // Filter active appointments
-        const activeAppointments = appointments.filter((appt) => {
-          const appointmentDate = new Date(
-            appt.customer_booking_start_time || appt.start_time
-          );
-          const now = new Date();
-          return (
-            appointmentDate > now &&
-            !["cancel", "completed"].includes(appt.status) &&
-            !uniqueAppointments.has(appt.booking_id)
-          );
-        });
-
-        // Add unique appointments
-        for (const appt of activeAppointments) {
-          if (foundAppointments.length >= 3) break;
-          if (!uniqueAppointments.has(appt.booking_id)) {
-            uniqueAppointments.add(appt.booking_id);
-            foundAppointments.push(appt);
-          }
-        }
-      }
-
-      // Move to next day if haven't found 3 appointments yet
-      if (foundAppointments.length < 3) {
-        currentDate.setDate(currentDate.getDate() + 1);
-        // Small delay to prevent rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
+    // ✅ If phone is 10 digits, try with 91 prefix
+    if (normalizedPhone.length === 10) {
+      normalizedPhone = "91" + normalizedPhone;
     }
 
-    log("Found appointments by phone:", foundAppointments.length);
+    log("🔍 Searching appointments for 30 days");
+    log("Phone variants to try:", normalizedPhone, phone.trim());
+
+    // ✅ Try searching with different phone formats
+    const phoneVariants = [
+      normalizedPhone,
+      normalizedPhone.startsWith("91")
+        ? normalizedPhone.substring(2)
+        : "91" + normalizedPhone,
+      phone.trim(), // Original format
+      `+${normalizedPhone}`, // With + prefix
+      `+91${
+        normalizedPhone.startsWith("91")
+          ? normalizedPhone.substring(2)
+          : normalizedPhone
+      }`, // +91 format
+    ];
+
+    // Remove duplicates
+    const uniquePhoneVariants = [...new Set(phoneVariants)];
+
+    log("📞 Trying phone variants:", uniquePhoneVariants);
+
+    for (const phoneVariant of uniquePhoneVariants) {
+      log(`\n--- Trying phone variant: ${phoneVariant} ---`);
+
+      let currentDate = new Date(startDate);
+      let daysSearched = 0;
+
+      while (currentDate <= searchEndDate && foundAppointments.length < 10) {
+        const formattedDate = formatDateForZohoFetch(currentDate);
+        daysSearched++;
+
+        log(`📅 Day ${daysSearched}: Searching ${formattedDate.split(" ")[0]}`);
+
+        const resp = await fetch(
+          "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Zoho-oauthtoken ${zohoToken}`,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: `data=${JSON.stringify({
+              customer_phone_number: phoneVariant,
+              from_time: formattedDate,
+            })}`,
+          }
+        );
+
+        const data = await resp.json();
+
+        // Only log if we found appointments or an error
+        if (data?.response?.returnvalue?.response !== "No Match Found") {
+          log(
+            "Zoho response:",
+            "status:",
+            resp.status,
+            "data:",
+            JSON.stringify(data)
+          );
+        }
+
+        if (
+          data?.response?.returnvalue?.response &&
+          Array.isArray(data.response.returnvalue.response)
+        ) {
+          const appointments = data.response.returnvalue.response;
+
+          log(
+            `✅ Found ${appointments.length} appointments on ${
+              formattedDate.split(" ")[0]
+            }`
+          );
+
+          // Filter active appointments
+          const activeAppointments = appointments.filter((appt) => {
+            const appointmentDate = new Date(
+              appt.customer_booking_start_time || appt.start_time
+            );
+            const now = new Date();
+            const isActive =
+              appointmentDate > now &&
+              !["cancel", "cancelled", "completed"].includes(
+                appt.status?.toLowerCase()
+              ) &&
+              !uniqueAppointments.has(appt.booking_id);
+
+            if (!isActive) {
+              log(
+                `⏭️  Skipping appointment ${appt.booking_id} - Status: ${appt.status}, Date: ${appointmentDate}`
+              );
+            }
+
+            return isActive;
+          });
+
+          // Add unique appointments
+          for (const appt of activeAppointments) {
+            if (foundAppointments.length >= 10) break;
+            if (!uniqueAppointments.has(appt.booking_id)) {
+              uniqueAppointments.add(appt.booking_id);
+              foundAppointments.push(appt);
+              log(
+                `✨ Added appointment: ${appt.booking_id} - ${appt.service_name}`
+              );
+            }
+          }
+        }
+
+        // If we found appointments with this phone variant, stop trying other variants
+        if (foundAppointments.length > 0) {
+          log(
+            `\n🎯 Found ${foundAppointments.length} appointments with phone: ${phoneVariant}`
+          );
+          log(`📊 Searched ${daysSearched} days out of 30 possible days`);
+          break;
+        }
+
+        // Move to next day
+        currentDate.setDate(currentDate.getDate() + 1);
+
+        // Small delay to prevent rate limiting (reduced to 300ms)
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+
+      // If we found appointments, stop trying other phone variants
+      if (foundAppointments.length > 0) {
+        break;
+      }
+
+      log(
+        `❌ No appointments found with phone variant: ${phoneVariant} (searched ${daysSearched} days)`
+      );
+    }
+
+    log(`\n📋 Total unique appointments found: ${foundAppointments.length}`);
+
+    if (foundAppointments.length === 0) {
+      log(
+        "💡 Suggestion: Check if the phone number in Zoho Bookings matches one of these formats:",
+        uniquePhoneVariants
+      );
+    }
+
     return foundAppointments;
   } catch (err) {
-    log("Zoho fetch appointments by phone error:", err);
+    log("❌ Zoho fetch appointments by phone error:", err);
     return [];
   }
 }
@@ -2373,10 +2323,10 @@ function waAppointmentList(session, appointments, page, purpose) {
     };
   });
 
-  // Add "Show More" button if there are more appointments
+  // Add "Show More" if there are more appointments
   if (appointments.length > end) {
     rows.push({
-      id: `show_more_appts_${purpose}_${page + 1}`,
+      id: "show_more_appointments",
       title: t(session, "showMore"),
     });
   }
