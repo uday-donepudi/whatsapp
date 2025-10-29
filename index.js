@@ -272,13 +272,23 @@ function waMainMenu(session) {
         buttons: [
           {
             type: "reply",
-            reply: { id: "my_bookings_btn", title: t(session, "myBookings") },
+            reply: {
+              id: "book_new_btn",
+              title: t(session, "bookAppointment"),
+            },
           },
           {
             type: "reply",
-            reply: { id: "help_btn", title: t(session, "help") },
+            reply: { id: "reschedule_btn", title: t(session, "reschedule") },
+          },
+          {
+            type: "reply",
+            reply: { id: "cancel_btn", title: t(session, "cancel") },
           },
         ],
+      },
+      footer: {
+        text: `💬 ${t(session, "help")}`,
       },
     },
   };
@@ -831,50 +841,19 @@ app.post("/webhook", async (req, res) => {
     // 3. HANDLE MAIN MENU BUTTONS
     // ===========================
     if (
-      (session.step === "AWAIT_MAIN" ||
-        session.step === "AWAIT_BOOKING_MENU") &&
+      session.step === "AWAIT_MAIN" &&
       msg.type === "interactive" &&
       msg.interactive.button_reply
     ) {
       const btnId = msg.interactive.button_reply.id;
 
-      if (btnId === "book_btn") {
-        // Fetch services from Zoho
-        const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
-        const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
+      // Remove this block:
+      // if (btnId === "book_btn") { ... }
 
-        if (status === 200 && data?.response?.returnvalue?.data?.length) {
-          const services = data.response.returnvalue.data;
-          session.services = services;
-          session.step = "AWAIT_SERVICE";
-          const serviceList = waServiceList(session, services);
-          await sendWhatsApp(from, serviceList);
-          return res.sendStatus(200);
-        } else {
-          await sendWhatsApp(from, waError(session, "noServices"));
-          return res.sendStatus(200);
-        }
-      }
+      // Remove this block:
+      // if (btnId === "my_bookings_btn") { ... }
 
-      if (btnId === "help_btn") {
-        // Start guided help flow: ask for name -> email -> multi-line message -> create Zoho Desk ticket
-        session.step = "AWAIT_HELP_NAME";
-        await sendWhatsApp(from, {
-          type: "text",
-          text: {
-            body: "Please enter your full name to create a support ticket:",
-          },
-        });
-        return res.sendStatus(200);
-      }
-
-      if (btnId === "my_bookings_btn") {
-        session.step = "AWAIT_BOOKING_MENU";
-        await sendWhatsApp(from, waMyBookingsMenu(session));
-        return res.sendStatus(200);
-      }
-
-      // Handle My Bookings menu buttons
+      // Keep and update this block for direct booking:
       if (btnId === "book_new_btn") {
         const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
         const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
@@ -901,7 +880,6 @@ app.post("/webhook", async (req, res) => {
           "lang:",
           session.language
         );
-        // ✅ Changed from enterEmailForLookup to enterPhone
         await sendWhatsApp(from, waTextPrompt(session, "enterPhone"));
         return res.sendStatus(200);
       }
@@ -916,10 +894,41 @@ app.post("/webhook", async (req, res) => {
           "lang:",
           session.language
         );
-        // ✅ Changed from enterEmailForLookup to enterPhone
         await sendWhatsApp(from, waTextPrompt(session, "enterPhone"));
         return res.sendStatus(200);
       }
+
+      if (btnId === "help_btn") {
+        // Start guided help flow
+        session.step = "AWAIT_HELP_NAME";
+        await sendWhatsApp(from, {
+          type: "text",
+          text: {
+            body: "Please enter your full name to create a support ticket:",
+          },
+        });
+        return res.sendStatus(200);
+      }
+    }
+
+    // Handle text message for Help (since it's in footer, not a button)
+    if (session.step === "AWAIT_MAIN" && msg.type === "text") {
+      const userText = msg.text.body.trim().toLowerCase();
+
+      if (userText.includes("help") || userText.includes("support")) {
+        session.step = "AWAIT_HELP_NAME";
+        await sendWhatsApp(from, {
+          type: "text",
+          text: {
+            body: "Please enter your full name to create a support ticket:",
+          },
+        });
+        return res.sendStatus(200);
+      }
+
+      // Otherwise show main menu again
+      await sendWhatsApp(from, waMainMenu(session));
+      return res.sendStatus(200);
     }
 
     // ===========================
@@ -2182,233 +2191,5 @@ async function createZohoDeskTicket(session) {
   } catch (err) {
     log("Zoho Desk ticket error", err);
     return null;
-  }
-}
-
-// Update the phone prompt text prompts
-function waTextPrompt(session, key) {
-  return {
-    type: "text",
-    text: {
-      body: t(session, key),
-    },
-  };
-}
-
-// ✅ New function to fetch appointments by phone number instead of email
-async function fetchZohoAppointmentsByPhone(session, phone) {
-  try {
-    const zohoToken = await getSessionZohoToken(session);
-    const uniqueAppointments = new Set();
-    const startDate = new Date();
-    const oneWeekFromNow = new Date(startDate);
-    oneWeekFromNow.setDate(oneWeekFromNow.getDate() + 7);
-
-    // Format date helper
-    const formatDateForZoho = (date) => {
-      const monthNames = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      return `${String(date.getDate()).padStart(2, "0")}-${
-        monthNames[date.getMonth()]
-      }-${date.getFullYear()} ${String(date.getHours()).padStart(
-        2,
-        "0"
-      )}:${String(date.getMinutes()).padStart(2, "0")}:${String(
-        date.getSeconds()
-      ).padStart(2, "0")}`;
-    };
-
-    let currentDate = new Date(startDate);
-    let foundAppointments = [];
-
-    // Normalize phone number - remove any non-digits
-    const normalizedPhone = phone.replace(/\D/g, "");
-    log("Searching appointments with phone:", normalizedPhone);
-
-    while (currentDate <= oneWeekFromNow && foundAppointments.length < 3) {
-      const formattedDate = formatDateForZoho(currentDate);
-      log("Fetching appointments from date:", formattedDate);
-
-      const resp = await fetch(
-        "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Zoho-oauthtoken ${zohoToken}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: `data=${JSON.stringify({
-            customer_phone_number: normalizedPhone, // ✅ Changed from customer_email
-            from_time: formattedDate,
-          })}`,
-        }
-      );
-
-      const data = await resp.json();
-      log(
-        "Zoho fetch appointments by phone",
-        resp.status,
-        JSON.stringify(data)
-      );
-
-      if (
-        data?.response?.returnvalue?.response &&
-        Array.isArray(data.response.returnvalue.response)
-      ) {
-        const appointments = data.response.returnvalue.response;
-
-        // Filter active appointments
-        const activeAppointments = appointments.filter((appt) => {
-          const appointmentDate = new Date(
-            appt.customer_booking_start_time || appt.start_time
-          );
-          const now = new Date();
-          return (
-            appointmentDate > now &&
-            !["cancel", "completed"].includes(appt.status) &&
-            !uniqueAppointments.has(appt.booking_id)
-          );
-        });
-
-        // Add unique appointments
-        for (const appt of activeAppointments) {
-          if (foundAppointments.length >= 3) break;
-          if (!uniqueAppointments.has(appt.booking_id)) {
-            uniqueAppointments.add(appt.booking_id);
-            foundAppointments.push(appt);
-          }
-        }
-      }
-
-      // Move to next day if haven't found 3 appointments yet
-      if (foundAppointments.length < 3) {
-        currentDate.setDate(currentDate.getDate() + 1);
-        // Small delay to prevent rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-    }
-
-    log("Found appointments by phone:", foundAppointments.length);
-    return foundAppointments;
-  } catch (err) {
-    log("Zoho fetch appointments by phone error:", err);
-    return [];
-  }
-}
-
-// ✅ Keep the old email function for backward compatibility if needed
-async function fetchZohoAppointments(session, email) {
-  try {
-    const zohoToken = await getSessionZohoToken(session);
-    const uniqueAppointments = new Set();
-    const startDate = new Date();
-    const oneWeekFromNow = new Date(startDate);
-    oneWeekFromNow.setDate(oneWeekFromNow.getDate() + 7);
-
-    // Format date helper
-    const formatDateForZoho = (date) => {
-      const monthNames = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      return `${String(date.getDate()).padStart(2, "0")}-${
-        monthNames[date.getMonth()]
-      }-${date.getFullYear()} ${String(date.getHours()).padStart(
-        2,
-        "0"
-      )}:${String(date.getMinutes()).padStart(2, "0")}:${String(
-        date.getSeconds()
-      ).padStart(2, "0")}`;
-    };
-
-    let currentDate = new Date(startDate);
-    let foundAppointments = [];
-
-    while (currentDate <= oneWeekFromNow && foundAppointments.length < 3) {
-      const formattedDate = formatDateForZoho(currentDate);
-      log("Fetching appointments from date:", formattedDate);
-
-      const resp = await fetch(
-        "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Zoho-oauthtoken ${zohoToken}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: `data=${JSON.stringify({
-            customer_email: email,
-            from_time: formattedDate,
-          })}`,
-        }
-      );
-
-      const data = await resp.json();
-      log("Zoho fetch appointments", resp.status, JSON.stringify(data));
-
-      if (
-        data?.response?.returnvalue?.response &&
-        Array.isArray(data.response.returnvalue.response)
-      ) {
-        const appointments = data.response.returnvalue.response;
-
-        // Filter active appointments
-        const activeAppointments = appointments.filter((appt) => {
-          const appointmentDate = new Date(
-            appt.customer_booking_start_time || appt.start_time
-          );
-          const now = new Date();
-          return (
-            appointmentDate > now &&
-            !["cancel", "completed"].includes(appt.status) &&
-            !uniqueAppointments.has(appt.booking_id)
-          );
-        });
-
-        // Add unique appointments
-        for (const appt of activeAppointments) {
-          if (foundAppointments.length >= 3) break;
-          if (!uniqueAppointments.has(appt.booking_id)) {
-            uniqueAppointments.add(appt.booking_id);
-            foundAppointments.push(appt);
-          }
-        }
-      }
-
-      // Move to next day if haven't found 3 appointments yet
-      if (foundAppointments.length < 3) {
-        currentDate.setDate(currentDate.getDate() + 1);
-        // Small delay to prevent rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-    }
-
-    log("Found appointments:", foundAppointments.length);
-    return foundAppointments;
-  } catch (err) {
-    log("Zoho fetch appointments error:", err);
-    return [];
   }
 }
