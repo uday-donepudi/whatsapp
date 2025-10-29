@@ -2397,19 +2397,27 @@ async function cancelZohoAppointment(session, bookingId) {
   try {
     const zohoToken = await getSessionZohoToken(session);
 
-    // ✅ Zoho Bookings DELETE endpoint doesn't need a body
-    // Just use the booking_id as a query parameter
-    const resp = await fetch(
-      `${ZOHO_BASE}/appointment?booking_id=${bookingId}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        },
-      }
-    );
+    // ✅ Use FormData with updateappointment endpoint and action="cancel"
+    const formData = new FormData();
+    formData.append("booking_id", bookingId);
+    formData.append("action", "cancel");
 
-    // Handle response - may be empty
+    log("Zoho cancel params:", {
+      booking_id: bookingId,
+      action: "cancel",
+    });
+
+    // ✅ Use updateappointment endpoint, not DELETE
+    const resp = await fetch(`${ZOHO_BASE}/updateappointment`, {
+      method: "POST",
+      headers: {
+        Authorization: `Zoho-oauthtoken ${zohoToken}`,
+        // Don't set Content-Type - FormData sets it automatically with boundary
+      },
+      body: formData,
+    });
+
+    // Handle response
     const text = await resp.text();
     log("Zoho cancel appointment raw response:", resp.status, text);
 
@@ -2427,7 +2435,7 @@ async function cancelZohoAppointment(session, bookingId) {
 
     log("Zoho cancel appointment", resp.status, JSON.stringify(data));
 
-    // ✅ Check for success - handle both response formats
+    // ✅ Check for success
     return (
       (resp.status === 200 || resp.status === 204) &&
       (data?.response?.status === "success" ||
@@ -2469,12 +2477,12 @@ async function rescheduleZohoAppointment(
       endDate.getHours()
     ).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}:00`;
 
-    // Use URLSearchParams instead of FormData for Zoho Bookings API
-    const params = new URLSearchParams();
-    params.append("booking_id", bookingId);
-    params.append("start_time", startTime);
-    params.append("end_time", endTime);
-    params.append("staff_id", staffId);
+    // ✅ Use FormData like in your curl command
+    const formData = new FormData();
+    formData.append("booking_id", bookingId);
+    formData.append("staff_id", staffId);
+    formData.append("start_time", startTime);
+    // Note: end_time is optional, Zoho will calculate it automatically
 
     log("Zoho reschedule params:", {
       booking_id: bookingId,
@@ -2484,16 +2492,17 @@ async function rescheduleZohoAppointment(
       duration: `${duration} mins`,
     });
 
-    const resp = await fetch(`${ZOHO_BASE}/reschedulebooking`, {
+    // ✅ Use the correct endpoint: rescheduleappointment (not reschedulebooking)
+    const resp = await fetch(`${ZOHO_BASE}/rescheduleappointment`, {
       method: "POST",
       headers: {
         Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        "Content-Type": "application/x-www-form-urlencoded",
+        // Don't set Content-Type - FormData sets it automatically with boundary
       },
-      body: params.toString(),
+      body: formData,
     });
 
-    // Handle empty response
+    // Handle response
     const text = await resp.text();
     log("Zoho reschedule raw response:", resp.status, text);
 
@@ -2514,7 +2523,9 @@ async function rescheduleZohoAppointment(
     // Check for success
     return (
       (resp.status === 200 || resp.status === 204) &&
-      (data?.response?.status === "success" || Object.keys(data).length === 0)
+      (data?.response?.status === "success" ||
+        data?.response?.returnvalue?.status === "upcoming" ||
+        Object.keys(data).length === 0)
     );
   } catch (err) {
     log("Zoho reschedule appointment error:", err);
