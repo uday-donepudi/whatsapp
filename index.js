@@ -273,6 +273,35 @@ function waMainMenu(session) {
           {
             type: "reply",
             reply: {
+              id: "my_bookings_btn",
+              title: t(session, "myBookings"),
+            },
+          },
+          {
+            type: "reply",
+            reply: {
+              id: "help_btn",
+              title: t(session, "help"),
+            },
+          },
+        ],
+      },
+    },
+  };
+}
+
+// Add the My Bookings submenu function
+function waMyBookingsMenu(session) {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: t(session, "myBookingsMenu") },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: {
               id: "book_new_btn",
               title: t(session, "bookAppointment"),
             },
@@ -286,9 +315,6 @@ function waMainMenu(session) {
             reply: { id: "cancel_btn", title: t(session, "cancel") },
           },
         ],
-      },
-      footer: {
-        text: `💬 ${t(session, "help")}`,
       },
     },
   };
@@ -847,13 +873,37 @@ app.post("/webhook", async (req, res) => {
     ) {
       const btnId = msg.interactive.button_reply.id;
 
-      // Remove this block:
-      // if (btnId === "book_btn") { ... }
+      // Handle "My Bookings" button
+      if (btnId === "my_bookings_btn") {
+        session.step = "AWAIT_BOOKING_MENU";
+        await sendWhatsApp(from, waMyBookingsMenu(session));
+        return res.sendStatus(200);
+      }
 
-      // Remove this block:
-      // if (btnId === "my_bookings_btn") { ... }
+      // Handle "Help" button
+      if (btnId === "help_btn") {
+        session.step = "AWAIT_HELP_NAME";
+        await sendWhatsApp(from, {
+          type: "text",
+          text: {
+            body: "Please enter your full name to create a support ticket:",
+          },
+        });
+        return res.sendStatus(200);
+      }
+    }
 
-      // Keep and update this block for direct booking:
+    // ===========================
+    // 3A. HANDLE MY BOOKINGS SUBMENU BUTTONS
+    // ===========================
+    if (
+      session.step === "AWAIT_BOOKING_MENU" &&
+      msg.type === "interactive" &&
+      msg.interactive.button_reply
+    ) {
+      const btnId = msg.interactive.button_reply.id;
+
+      // Handle "Book New Appointment" button
       if (btnId === "book_new_btn") {
         const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
         const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
@@ -870,6 +920,7 @@ app.post("/webhook", async (req, res) => {
         }
       }
 
+      // Handle "Reschedule" button
       if (btnId === "reschedule_btn") {
         session.step = "AWAIT_RESCHEDULE_PHONE";
         log(
@@ -884,6 +935,7 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
+      // Handle "Cancel" button
       if (btnId === "cancel_btn") {
         session.step = "AWAIT_CANCEL_PHONE";
         log(
@@ -897,38 +949,6 @@ app.post("/webhook", async (req, res) => {
         await sendWhatsApp(from, waTextPrompt(session, "enterPhone"));
         return res.sendStatus(200);
       }
-
-      if (btnId === "help_btn") {
-        // Start guided help flow
-        session.step = "AWAIT_HELP_NAME";
-        await sendWhatsApp(from, {
-          type: "text",
-          text: {
-            body: "Please enter your full name to create a support ticket:",
-          },
-        });
-        return res.sendStatus(200);
-      }
-    }
-
-    // Handle text message for Help (since it's in footer, not a button)
-    if (session.step === "AWAIT_MAIN" && msg.type === "text") {
-      const userText = msg.text.body.trim().toLowerCase();
-
-      if (userText.includes("help") || userText.includes("support")) {
-        session.step = "AWAIT_HELP_NAME";
-        await sendWhatsApp(from, {
-          type: "text",
-          text: {
-            body: "Please enter your full name to create a support ticket:",
-          },
-        });
-        return res.sendStatus(200);
-      }
-
-      // Otherwise show main menu again
-      await sendWhatsApp(from, waMainMenu(session));
-      return res.sendStatus(200);
     }
 
     // ===========================
