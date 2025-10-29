@@ -2397,6 +2397,8 @@ async function cancelZohoAppointment(session, bookingId) {
   try {
     const zohoToken = await getSessionZohoToken(session);
 
+    // ✅ Zoho Bookings DELETE endpoint doesn't need a body
+    // Just use the booking_id as a query parameter
     const resp = await fetch(
       `${ZOHO_BASE}/appointment?booking_id=${bookingId}`,
       {
@@ -2407,10 +2409,32 @@ async function cancelZohoAppointment(session, bookingId) {
       }
     );
 
-    const data = await resp.json();
+    // Handle response - may be empty
+    const text = await resp.text();
+    log("Zoho cancel appointment raw response:", resp.status, text);
+
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (parseErr) {
+      log("Zoho cancel JSON parse error:", parseErr.message);
+      // If response is empty but status is 200/204, consider it success
+      if (resp.status === 200 || resp.status === 204) {
+        return true;
+      }
+      data = { parseError: true, raw: text };
+    }
+
     log("Zoho cancel appointment", resp.status, JSON.stringify(data));
 
-    return resp.status === 200 && data?.response?.status === "success";
+    // ✅ Check for success - handle both response formats
+    return (
+      (resp.status === 200 || resp.status === 204) &&
+      (data?.response?.status === "success" ||
+        Object.keys(data).length === 0 ||
+        !data.response?.status || // If no status field, assume success on 200
+        data.response?.errormessage === undefined) // No error message
+    );
   } catch (err) {
     log("Zoho cancel appointment error:", err);
     return false;
@@ -2433,59 +2457,65 @@ async function rescheduleZohoAppointment(
       if (match) duration = parseInt(match[1], 10);
     }
 
-    const startDate = new Date(startTime);
+    // Parse start_time to create end_time in the same format
+    // startTime format: "2025-10-30 10:30:00"
+    const startDate = new Date(startTime.replace(/-/g, "/"));
     const endDate = new Date(startDate.getTime() + duration * 60000);
 
-    const formatZohoDateTime = (date) => {
-      const day = String(date.getDate()).padStart(2, "0");
-      const monthNames = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      const month = monthNames[date.getMonth()];
-      const year = date.getFullYear();
-      const hour = String(date.getHours()).padStart(2, "0");
-      const minute = String(date.getMinutes()).padStart(2, "0");
-      return `${day}-${month}-${year} ${hour}:${minute}:00`;
-    };
+    // Format end time in the same format as start time: "YYYY-MM-DD HH:mm:ss"
+    const endTime = `${endDate.getFullYear()}-${String(
+      endDate.getMonth() + 1
+    ).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")} ${String(
+      endDate.getHours()
+    ).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}:00`;
 
-    const endTime = formatZohoDateTime(endDate);
-
-    const formData = new FormData();
-    formData.append("booking_id", bookingId);
-    formData.append("start_time", startTime);
-    formData.append("end_time", endTime);
-    formData.append("staff_id", staffId);
+    // Use URLSearchParams instead of FormData for Zoho Bookings API
+    const params = new URLSearchParams();
+    params.append("booking_id", bookingId);
+    params.append("start_time", startTime);
+    params.append("end_time", endTime);
+    params.append("staff_id", staffId);
 
     log("Zoho reschedule params:", {
       booking_id: bookingId,
       start_time: startTime,
       end_time: endTime,
       staff_id: staffId,
+      duration: `${duration} mins`,
     });
 
     const resp = await fetch(`${ZOHO_BASE}/reschedulebooking`, {
       method: "POST",
       headers: {
         Authorization: `Zoho-oauthtoken ${zohoToken}`,
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: formData,
+      body: params.toString(),
     });
 
-    const data = await resp.json();
+    // Handle empty response
+    const text = await resp.text();
+    log("Zoho reschedule raw response:", resp.status, text);
+
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (parseErr) {
+      log("Zoho reschedule JSON parse error:", parseErr.message);
+      // If response is empty but status is 200, consider it success
+      if (resp.status === 200 || resp.status === 204) {
+        return true;
+      }
+      data = { parseError: true, raw: text };
+    }
+
     log("Zoho reschedule appointment", resp.status, JSON.stringify(data));
 
-    return resp.status === 200 && data?.response?.status === "success";
+    // Check for success
+    return (
+      (resp.status === 200 || resp.status === 204) &&
+      (data?.response?.status === "success" || Object.keys(data).length === 0)
+    );
   } catch (err) {
     log("Zoho reschedule appointment error:", err);
     return false;
