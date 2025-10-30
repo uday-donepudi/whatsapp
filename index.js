@@ -1394,27 +1394,25 @@ app.post("/webhook", async (req, res) => {
 
       // Handle "Show More" slots
       if (slotId === "show_more_slots") {
-        const today = new Date(
-          session.rescheduleSlots[session.rescheduleSlots.length - 1].date
-        );
-        const { slots, hasMore } = await findNextAvailableSlots(
+        const slotPageSize = 9;
+        session.slotPage = (session.slotPage || 0) + 1;
+        const start = session.slotPage * slotPageSize;
+        const pageSlots = session.slots.slice(start, start + slotPageSize);
+
+        const slotListMsg = waSlotList(
           session,
-          today,
-          9,
-          60
+          pageSlots,
+          session.selectedDate.label
         );
 
-        if (!slots.length) {
-          await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
-          session.step = "AWAIT_MAIN";
-          return res.sendStatus(200);
+        if (session.slots.length > start + slotPageSize) {
+          slotListMsg.interactive.action.sections[0].rows.push({
+            id: "show_more_slots",
+            title: t(session, "showMore"),
+          });
         }
 
-        session.rescheduleSlots = session.rescheduleSlots.concat(slots);
-        await sendWhatsApp(
-          from,
-          waSlotListWithShowMore(session, slots, hasMore)
-        );
+        await sendWhatsApp(from, slotListMsg);
         return res.sendStatus(200);
       }
 
@@ -1641,125 +1639,439 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Add these handlers AFTER the "HELP FLOW" section and BEFORE the "FALLBACK" section
+    // Remove the "W" on line 20 and add the missing handlers
+
+    // Line 20 should be empty - remove the W
+
+    // Add these handlers after the AWAIT_CANCEL_PHONE section and before the FALLBACK section:
 
     // ===========================
-    // RESCHEDULE FLOW: Phone Input
+    // HANDLE APPOINTMENT SELECTION FOR RESCHEDULE
     // ===========================
-    if (session.step === "AWAIT_RESCHEDULE_PHONE" && msg.type === "text") {
-      const phone = msg.text.body.trim();
-      if (!validatePhone(phone)) {
-        session.phoneAttempts = (session.phoneAttempts || 0) + 1;
-        if (session.phoneAttempts >= 3) {
-          await sendWhatsApp(from, waError(session, "bookingCancelled"));
-          clearSession(from);
-          return res.sendStatus(200);
-        }
-        await sendWhatsApp(from, waTextPrompt(session, "invalidPhone"));
+    if (
+      session.step === "AWAIT_APPOINTMENT_LIST_RESCHEDULE" &&
+      msg.type === "interactive" &&
+      msg.interactive.list_reply
+    ) {
+      const selectedId = msg.interactive.list_reply.id;
+
+      // Handle "Show More" appointments
+      if (selectedId === "show_more_appointments") {
+        const pageSize = 10;
+        session.appointmentPage = (session.appointmentPage || 0) + 1;
+        const start = session.appointmentPage * pageSize;
+        const pageAppointments = session.appointments.slice(
+          start,
+          start + pageSize
+        );
+
+        await sendWhatsApp(
+          from,
+          waAppointmentList(
+            session,
+            pageAppointments,
+            session.appointmentPage,
+            "reschedule"
+          )
+        );
         return res.sendStatus(200);
       }
 
-      // Show searching message
-      await sendWhatsApp(from, waSearchingAppointments(session));
+      // Extract booking_id, service_id, staff_id from the selected appointment
+      const parts = selectedId.split("_");
+      const bookingId = parts[2]; // "reschedule_appt_#HE-00012_..."
+      const serviceId = parts[3];
+      const staffId = parts[4];
 
-      // Store the phone number for this session
-      session.customerPhone = phone;
-
-      // ✅ Changed to use phone instead of email
-      const appointments = await fetchZohoAppointmentsByPhone(session, phone);
-
-      log("Total appointments found:", appointments.length); // Add debug log
-
-      if (!appointments.length) {
-        // ✅ Show proper error message and go back to booking menu
-        await sendWhatsApp(from, {
-          type: "interactive",
-          interactive: {
-            type: "button",
-            body: {
-              text: `❌ ${t(session, "noAppointmentsFound")}`,
-            },
-            action: {
-              buttons: [
-                {
-                  type: "reply",
-                  reply: { id: "back_to_menu", title: t(session, "home") },
-                },
-              ],
-            },
-          },
-        });
-        session.step = "AWAIT_ERROR_RESPONSE";
-        return res.sendStatus(200);
-      }
-
-      session.appointments = appointments;
-      session.appointmentPage = 0;
-      session.step = "AWAIT_APPOINTMENT_LIST_RESCHEDULE";
-      await sendWhatsApp(
-        from,
-        waAppointmentList(session, appointments, 0, "reschedule")
+      // Find the appointment details
+      const selectedAppointment = session.appointments.find(
+        (appt) => appt.booking_id === bookingId
       );
+
+      if (!selectedAppointment) {
+        await sendWhatsApp(from, waError(session, "invalidService"));
+        session.step = "AWAIT_MAIN";
+        return res.sendStatus(200);
+      }
+
+      // Store selected appointment details
+      session.rescheduleBookingId = bookingId;
+      session.rescheduleServiceId = serviceId;
+      session.rescheduleStaffId = staffId;
+      session.selectedService = {
+        id: serviceId,
+        name: selectedAppointment.service_name,
+        duration: selectedAppointment.duration,
+        service_type: selectedAppointment.booking_type,
+      };
+
+      // Store staff info
+      session.selectedStaff = staffId;
+
+      // Show month selection for reschedule
+      const now = new Date();
+      const months = [];
+      for (let i = 0; i < 3; ++i) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+        months.push({
+          id: `month_${d.getFullYear()}_${String(d.getMonth() + 1).padStart(
+            2,
+            "0"
+          )}`,
+          label: d.toLocaleString("en-US", {
+            month: "long",
+            year: "numeric",
+            timeZone: "Asia/Kolkata",
+          }),
+          year: d.getFullYear(),
+          month: d.getMonth() + 1,
+        });
+      }
+      session.months = months;
+      session.step = "AWAIT_RESCHEDULE_MONTH";
+      await sendWhatsApp(from, waMonthList(session, months));
       return res.sendStatus(200);
     }
 
     // ===========================
-    // CANCEL FLOW: Phone Input
+    // RESCHEDULE: MONTH SELECTION
     // ===========================
-    if (session.step === "AWAIT_CANCEL_PHONE" && msg.type === "text") {
-      const phone = msg.text.body.trim();
-      if (!validatePhone(phone)) {
-        session.phoneAttempts = (session.phoneAttempts || 0) + 1;
-        if (session.phoneAttempts >= 3) {
-          await sendWhatsApp(from, waError(session, "bookingCancelled"));
-          clearSession(from);
-          return res.sendStatus(200);
+    if (
+      session.step === "AWAIT_RESCHEDULE_MONTH" &&
+      msg.type === "interactive" &&
+      msg.interactive.list_reply
+    ) {
+      const monthId = msg.interactive.list_reply.id;
+      const monthObj = (session.months || []).find((m) => m.id === monthId);
+
+      if (!monthObj) {
+        await sendWhatsApp(from, waError(session, "invalidService"));
+        session.step = "AWAIT_APPOINTMENT_LIST_RESCHEDULE";
+        return res.sendStatus(200);
+      }
+
+      session.selectedMonth = monthObj;
+
+      // Show searching dates message
+      await sendWhatsApp(from, waSearchingDates(session));
+
+      const { year, month } = monthObj;
+      const lastDay = new Date(year, month, 0).getDate();
+      const availableDates = [];
+      const today = new Date();
+      const startDay =
+        year === today.getFullYear() && month === today.getMonth() + 1
+          ? today.getDate()
+          : 1;
+
+      const serviceId = session.selectedService.id;
+      const staffId = session.selectedStaff;
+
+      for (let day = startDay; day <= lastDay; ++day) {
+        const dateObj = new Date(year, month - 1, day);
+        const dateStr = formatDateForZoho(dateObj);
+
+        let slotUrl = `${ZOHO_BASE}/availableslots?service_id=${serviceId}&selected_date=${dateStr}`;
+
+        if (staffId) {
+          slotUrl += `&staff_id=${staffId}`;
         }
-        await sendWhatsApp(from, waTextPrompt(session, "invalidPhone"));
+
+        const { data } = await fetchZoho(slotUrl, {}, 3, session);
+        const slots = data?.response?.returnvalue?.data;
+
+        if (Array.isArray(slots) && slots.length > 0) {
+          availableDates.push({
+            id: `date_${dateStr}`,
+            label: formatDate(dateObj),
+            rawDate: dateStr,
+            slots: slots.length,
+          });
+        }
+      }
+
+      if (!availableDates.length) {
+        await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
+        session.step = "AWAIT_RESCHEDULE_MONTH";
         return res.sendStatus(200);
       }
 
-      // Show searching message
-      await sendWhatsApp(from, waSearchingAppointments(session));
+      session.availableDates = availableDates;
+      session.datePage = 0;
+      session.step = "AWAIT_RESCHEDULE_DATE";
 
-      // Store the phone number for this session
-      session.customerPhone = phone;
+      const pageSize = 9;
+      const pageDates = availableDates.slice(0, pageSize);
+      const dateListMsg = waDateList(session, pageDates, monthObj.label);
 
-      // ✅ Changed to use phone instead of email
-      const appointments = await fetchZohoAppointmentsByPhone(session, phone);
-
-      log("Total appointments found:", appointments.length); // Add debug log
-
-      if (!appointments.length) {
-        // ✅ Show proper error message and go back to booking menu
-        await sendWhatsApp(from, {
-          type: "interactive",
-          interactive: {
-            type: "button",
-            body: {
-              text: `❌ ${t(session, "noAppointmentsFound")}`,
-            },
-            action: {
-              buttons: [
-                {
-                  type: "reply",
-                  reply: { id: "back_to_menu", title: t(session, "home") },
-                },
-              ],
-            },
-          },
+      if (availableDates.length > pageSize) {
+        dateListMsg.interactive.action.sections[0].rows.push({
+          id: "show_more_dates",
+          title: t(session, "showMore"),
         });
-        session.step = "AWAIT_ERROR_RESPONSE";
+      }
+
+      await sendWhatsApp(from, dateListMsg);
+      return res.sendStatus(200);
+    }
+
+    // ===========================
+    // RESCHEDULE: DATE SELECTION
+    // ===========================
+    if (
+      session.step === "AWAIT_RESCHEDULE_DATE" &&
+      msg.type === "interactive" &&
+      msg.interactive.list_reply
+    ) {
+      const dateId = msg.interactive.list_reply.id;
+
+      // Handle "Show More" dates
+      if (dateId === "show_more_dates") {
+        const pageSize = 9;
+        session.datePage = (session.datePage || 0) + 1;
+        const start = session.datePage * pageSize;
+        const pageDates = session.availableDates.slice(start, start + pageSize);
+
+        const dateListMsg = waDateList(
+          session,
+          pageDates,
+          session.selectedMonth.label
+        );
+
+        if (session.availableDates.length > start + pageSize) {
+          dateListMsg.interactive.action.sections[0].rows.push({
+            id: "show_more_dates",
+            title: t(session, "showMore"),
+          });
+        }
+
+        await sendWhatsApp(from, dateListMsg);
         return res.sendStatus(200);
       }
 
-      session.appointments = appointments;
-      session.appointmentPage = 0;
-      session.step = "AWAIT_APPOINTMENT_LIST_CANCEL";
-      await sendWhatsApp(
-        from,
-        waAppointmentList(session, appointments, 0, "cancel")
+      const dateObj = (session.availableDates || []).find(
+        (d) => d.id === dateId
       );
+
+      if (!dateObj) {
+        await sendWhatsApp(from, waError(session, "invalidSlot"));
+        session.step = "AWAIT_RESCHEDULE_MONTH";
+        return res.sendStatus(200);
+      }
+
+      session.selectedDate = dateObj;
+
+      // Show searching slots message
+      await sendWhatsApp(from, waSearchingSlots(session));
+
+      const serviceId = session.selectedService.id;
+      const staffId = session.selectedStaff;
+
+      let slotUrl = `${ZOHO_BASE}/availableslots?service_id=${serviceId}&selected_date=${dateObj.rawDate}`;
+
+      if (staffId) {
+        slotUrl += `&staff_id=${staffId}`;
+      }
+
+      const { data } = await fetchZoho(slotUrl, {}, 3, session);
+      const slots = Array.isArray(data?.response?.returnvalue?.data)
+        ? data.response.returnvalue.data
+        : [];
+
+      if (!slots.length) {
+        await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
+        session.step = "AWAIT_RESCHEDULE_DATE";
+        return res.sendStatus(200);
+      }
+
+      session.slots = slots.map((timeStr, idx) => ({
+        id: `slot_${dateObj.rawDate}_${timeStr.replace(/[:\s]/g, "-")}_${idx}`,
+        label: timeStr,
+        time: timeStr,
+        rawTime: timeStr,
+      }));
+
+      session.slotPage = 0;
+      session.step = "AWAIT_RESCHEDULE_SLOT";
+
+      const slotPageSize = 9;
+      const pageSlots = session.slots.slice(0, slotPageSize);
+      const slotListMsg = waSlotList(session, pageSlots, dateObj.label);
+
+      if (session.slots.length > slotPageSize) {
+        slotListMsg.interactive.action.sections[0].rows.push({
+          id: "show_more_slots",
+          title: t(session, "showMore"),
+        });
+      }
+
+      await sendWhatsApp(from, slotListMsg);
+      return res.sendStatus(200);
+    }
+
+    // ===========================
+    // HANDLE SLOT SELECTION FOR RESCHEDULE
+    // ===========================
+    if (
+      session.step === "AWAIT_RESCHEDULE_SLOT" &&
+      msg.type === "interactive" &&
+      msg.interactive.list_reply
+    ) {
+      const slotId = msg.interactive.list_reply.id;
+
+      // Handle "Show More" slots
+      if (slotId === "show_more_slots") {
+        const slotPageSize = 9;
+        session.slotPage = (session.slotPage || 0) + 1;
+        const start = session.slotPage * slotPageSize;
+        const pageSlots = session.slots.slice(start, start + slotPageSize);
+
+        const slotListMsg = waSlotList(
+          session,
+          pageSlots,
+          session.selectedDate.label
+        );
+
+        if (session.slots.length > start + slotPageSize) {
+          slotListMsg.interactive.action.sections[0].rows.push({
+            id: "show_more_slots",
+            title: t(session, "showMore"),
+          });
+        }
+
+        await sendWhatsApp(from, slotListMsg);
+        return res.sendStatus(200);
+      }
+
+      // Find selected slot
+      const selectedSlot = session.slots.find((s) => s.id === slotId);
+
+      if (!selectedSlot) {
+        await sendWhatsApp(from, waError(session, "invalidSlot"));
+        session.step = "AWAIT_RESCHEDULE_DATE";
+        return res.sendStatus(200);
+      }
+
+      // Format the date-time for Zoho API
+      const [day, month, year] = session.selectedDate.rawDate.split("-");
+      const monthIndex = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ].indexOf(month);
+
+      // Parse time
+      const timeMatch = selectedSlot.time.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+      let hour = parseInt(timeMatch[1], 10);
+      const minute = timeMatch[2];
+      const ampm = timeMatch[3].toUpperCase();
+
+      // Convert to 24-hour format
+      if (ampm === "PM" && hour !== 12) {
+        hour += 12;
+      } else if (ampm === "AM" && hour === 12) {
+        hour = 0;
+      }
+
+      // Create date object
+      const startDate = new Date(
+        year,
+        monthIndex,
+        parseInt(day),
+        hour,
+        parseInt(minute),
+        0
+      );
+
+      // Format as "YYYY-MM-DD HH:mm:ss"
+      const startTime = `${startDate.getFullYear()}-${String(
+        startDate.getMonth() + 1
+      ).padStart(2, "0")}-${String(startDate.getDate()).padStart(
+        2,
+        "0"
+      )} ${String(startDate.getHours()).padStart(2, "0")}:${String(
+        startDate.getMinutes()
+      ).padStart(2, "0")}:00`;
+
+      // Reschedule the appointment
+      const success = await rescheduleZohoAppointment(
+        session,
+        session.rescheduleBookingId,
+        session.rescheduleStaffId,
+        startTime
+      );
+
+      if (success) {
+        await sendWhatsApp(
+          from,
+          waSuccessMessage(session, "appointmentRescheduled")
+        );
+      } else {
+        await sendWhatsApp(from, waError(session, "rescheduleFailed"));
+      }
+
+      clearSession(from);
+      return res.sendStatus(200);
+    }
+
+    // ===========================
+    // HANDLE APPOINTMENT SELECTION FOR CANCEL
+    // ===========================
+    if (
+      session.step === "AWAIT_APPOINTMENT_LIST_CANCEL" &&
+      msg.type === "interactive" &&
+      msg.interactive.list_reply
+    ) {
+      const selectedId = msg.interactive.list_reply.id;
+
+      // Handle "Show More" appointments
+      if (selectedId === "show_more_appointments") {
+        const pageSize = 10;
+        session.appointmentPage = (session.appointmentPage || 0) + 1;
+        const start = session.appointmentPage * pageSize;
+        const pageAppointments = session.appointments.slice(
+          start,
+          start + pageSize
+        );
+
+        await sendWhatsApp(
+          from,
+          waAppointmentList(
+            session,
+            pageAppointments,
+            session.appointmentPage,
+            "cancel"
+          )
+        );
+        return res.sendStatus(200);
+      }
+
+      // Extract booking_id from the selected appointment
+      const parts = selectedId.split("_");
+      const bookingId = parts[2]; // "cancel_appt_#HE-00012_..."
+
+      // Cancel the appointment
+      const success = await cancelZohoAppointment(session, bookingId);
+
+      if (success) {
+        await sendWhatsApp(
+          from,
+          waSuccessMessage(session, "appointmentCancelled")
+        );
+      } else {
+        await sendWhatsApp(from, waError(session, "cancelFailed"));
+      }
+
+      clearSession(from);
       return res.sendStatus(200);
     }
 
