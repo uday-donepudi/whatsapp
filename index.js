@@ -986,6 +986,122 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
+    // RESCHEDULE FLOW: COLLECT PHONE NUMBER
+    // ===========================
+    if (session.step === "AWAIT_RESCHEDULE_PHONE" && msg.type === "text") {
+      const phone = msg.text.body.trim();
+
+      if (!validatePhone(phone)) {
+        session.phoneAttempts = (session.phoneAttempts || 0) + 1;
+        if (session.phoneAttempts >= 3) {
+          await sendWhatsApp(from, waError(session, "bookingCancelled"));
+          clearSession(from);
+          return res.sendStatus(200);
+        }
+        await sendWhatsApp(from, waTextPrompt(session, "invalidPhone"));
+        return res.sendStatus(200);
+      }
+
+      // Show searching message
+      await sendWhatsApp(from, waSearchingAppointments(session));
+
+      // Fetch appointments by phone
+      const appointments = await fetchZohoAppointmentsByPhone(session, phone);
+
+      if (!appointments || appointments.length === 0) {
+        await sendWhatsApp(from, {
+          type: "interactive",
+          interactive: {
+            type: "button",
+            body: { text: `❌ ${t(session, "noAppointmentsFound")}` },
+            action: {
+              buttons: [
+                {
+                  type: "reply",
+                  reply: {
+                    id: "back_to_menu",
+                    title: t(session, "backToMenu"),
+                  },
+                },
+              ],
+            },
+          },
+        });
+        session.step = "AWAIT_ERROR_RESPONSE";
+        return res.sendStatus(200);
+      }
+
+      // Store appointments and show list
+      session.appointments = appointments;
+      session.appointmentPage = 0;
+      session.step = "AWAIT_APPOINTMENT_LIST_RESCHEDULE";
+
+      await sendWhatsApp(
+        from,
+        waAppointmentList(session, appointments, 0, "reschedule")
+      );
+      return res.sendStatus(200);
+    }
+
+    // ===========================
+    // CANCEL FLOW: COLLECT PHONE NUMBER
+    // ===========================
+    if (session.step === "AWAIT_CANCEL_PHONE" && msg.type === "text") {
+      const phone = msg.text.body.trim();
+
+      if (!validatePhone(phone)) {
+        session.phoneAttempts = (session.phoneAttempts || 0) + 1;
+        if (session.phoneAttempts >= 3) {
+          await sendWhatsApp(from, waError(session, "bookingCancelled"));
+          clearSession(from);
+          return res.sendStatus(200);
+        }
+        await sendWhatsApp(from, waTextPrompt(session, "invalidPhone"));
+        return res.sendStatus(200);
+      }
+
+      // Show searching message
+      await sendWhatsApp(from, waSearchingAppointments(session));
+
+      // Fetch appointments by phone
+      const appointments = await fetchZohoAppointmentsByPhone(session, phone);
+
+      if (!appointments || appointments.length === 0) {
+        await sendWhatsApp(from, {
+          type: "interactive",
+          interactive: {
+            type: "button",
+            body: { text: `❌ ${t(session, "noAppointmentsFound")}` },
+            action: {
+              buttons: [
+                {
+                  type: "reply",
+                  reply: {
+                    id: "back_to_menu",
+                    title: t(session, "backToMenu"),
+                  },
+                },
+              ],
+            },
+          },
+        });
+        session.step = "AWAIT_ERROR_RESPONSE";
+        return res.sendStatus(200);
+      }
+
+      // Store appointments and show list
+      session.appointments = appointments;
+      session.appointmentPage = 0;
+      session.step = "AWAIT_APPOINTMENT_LIST_CANCEL";
+
+      await sendWhatsApp(
+        from,
+        waAppointmentList(session, appointments, 0, "cancel")
+      );
+      return res.sendStatus(200);
+    }
+
+    // ===========================
     // 4. HELP: HOME BUTTON
     // ===========================
     if (
@@ -2493,7 +2609,7 @@ async function fetchZohoAppointmentsByPhone(session, phone) {
         log(`📅 Day ${daysSearched}: Searching ${formattedDate.split(" ")[0]}`);
 
         const resp = await fetch(
-          "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
+          "https://www.zoapis.in/bookings/v1/json/fetchappointment",
           {
             method: "POST",
             headers: {
