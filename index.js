@@ -243,7 +243,7 @@ function waLanguageSelection() {
     interactive: {
       type: "list",
       body: {
-        text: "Please select your preferred language / कृपया अपनी पसंदीदा भाषा चुनें / దయచేసి మీ ఇష్టమైన భాషను ఎంచుకోండి",
+        text: "Welcome! Let’s get your booking started.",
       },
       action: {
         button: "Choose Language",
