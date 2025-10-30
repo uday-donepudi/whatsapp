@@ -409,7 +409,7 @@ function waDateList(session, dates, monthLabel) {
               id: d.id,
               title:
                 d.label.length > 24 ? d.label.slice(0, 21) + "..." : d.label,
-              description: t(session, "slotsAvailable", { count: d.slots }),
+              description: t(session, "slotsAvailable"),
             })),
           },
         ],
@@ -1795,7 +1795,7 @@ app.post("/webhook", async (req, res) => {
 
       // Extract booking_id, service_id, staff_id from the selected appointment
       const parts = selectedId.split("_");
-      const bookingId = parts[2]; // "reschedule_appt_#HE-00012_..."
+      const bookingId = parts[2];
       const serviceId = parts[3];
       const staffId = parts[4];
 
@@ -1820,32 +1820,42 @@ app.post("/webhook", async (req, res) => {
         duration: selectedAppointment.duration,
         service_type: selectedAppointment.booking_type,
       };
-
-      // Store staff info
       session.selectedStaff = staffId;
 
-      // Show month selection for reschedule
-      const now = new Date();
-      const months = [];
-      for (let i = 0; i < 3; ++i) {
-        const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-        months.push({
-          id: `month_${d.getFullYear()}_${String(d.getMonth() + 1).padStart(
-            2,
-            "0"
-          )}`,
-          label: d.toLocaleString("en-US", {
-            month: "long",
-            year: "numeric",
-            timeZone: "Asia/Kolkata",
-          }),
-          year: d.getFullYear(),
-          month: d.getMonth() + 1,
-        });
+      // ✅ Send instruction message FIRST
+      await sendWhatsApp(from, {
+        type: "text",
+        text: {
+          body: `📅 ${t(session, "selectSlotToReschedule")}\n\n⏳ ${t(
+            session,
+            "searchingSlots"
+          )}...`,
+        },
+      });
+
+      // ✅ Fetch next available slots directly (scan next 30 days)
+      const today = new Date();
+      const { slots: availableSlots, hasMore } = await findNextAvailableSlots(
+        session,
+        today,
+        9, // Show 9 slots
+        30 // Scan 30 days
+      );
+
+      if (!availableSlots || availableSlots.length === 0) {
+        await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
+        session.step = "AWAIT_MAIN";
+        return res.sendStatus(200);
       }
-      session.months = months;
-      session.step = "AWAIT_RESCHEDULE_MONTH";
-      await sendWhatsApp(from, waMonthList(session, months));
+
+      // Store slots and show list
+      session.slots = availableSlots;
+      session.step = "AWAIT_RESCHEDULE_SLOT";
+
+      await sendWhatsApp(
+        from,
+        waSlotListWithShowMore(session, availableSlots, hasMore)
+      );
       return res.sendStatus(200);
     }
 

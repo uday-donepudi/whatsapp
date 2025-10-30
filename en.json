@@ -68,5 +68,6 @@
   "paymentPending": "⏳ Waiting for payment. Complete it and tap '✅ I Have Paid'.",
   "paymentLinkFailed": "❌ Payment link error. Try again or contact support.",
   "appointmentRescheduled": "✅ Appointment rescheduled successfully!",
-  "appointmentCancelled": "✅ Appointment cancelled successfully."
+  "appointmentCancelled": "✅ Appointment cancelled successfully.",
+  "selectSlotToReschedule": "Please select a slot to reschedule your appointment"
 }
