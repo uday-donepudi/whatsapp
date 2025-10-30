@@ -2528,8 +2528,6 @@ async function createZohoDeskTicket(session) {
   }
 }
 
-// Add these functions after the waSearchingAppointments function and before the webhook handlers
-
 // ✅ New function to fetch appointments by phone number instead of email
 async function fetchZohoAppointmentsByPhone(session, phone) {
   try {
@@ -2609,7 +2607,7 @@ async function fetchZohoAppointmentsByPhone(session, phone) {
         log(`📅 Day ${daysSearched}: Searching ${formattedDate.split(" ")[0]}`);
 
         const resp = await fetch(
-          "https://www.zoapis.in/bookings/v1/json/fetchappointment",
+          "https://www.zohoapis.in/bookings/v1/json/fetchappointment",
           {
             method: "POST",
             headers: {
