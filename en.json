@@ -34,7 +34,7 @@
   "invalidName": "Name Too Short",
   "enterEmail": "Email",
   "invalidEmail": "Invalid Email",
-  "enterPhone": "Mobile Number",
+  "enterPhone": "Mobile Number (10 digits)",
   "invalidPhone": "Invalid number. Use 10 digits (e.g., 9xxxxxxxxx)",
   "enterEmailForLookup": "Enter Email",
   "noAppointmentsFound": "No Appointments",
