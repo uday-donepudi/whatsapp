@@ -66,5 +66,7 @@
   "paymentLink": "Pay Now",
   "paid": "✅ I Have Paid",
   "paymentPending": "⏳ Waiting for payment. Complete it and tap '✅ I Have Paid'.",
-  "paymentLinkFailed": "❌ Payment link error. Try again or contact support."
+  "paymentLinkFailed": "❌ Payment link error. Try again or contact support.",
+  "appointmentRescheduled": "✅ Appointment rescheduled successfully!",
+  "appointmentCancelled": "✅ Appointment cancelled successfully."
 }

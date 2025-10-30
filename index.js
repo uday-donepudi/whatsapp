@@ -1394,25 +1394,27 @@ app.post("/webhook", async (req, res) => {
 
       // Handle "Show More" slots
       if (slotId === "show_more_slots") {
-        const slotPageSize = 9;
-        session.slotPage = (session.slotPage || 0) + 1;
-        const start = session.slotPage * slotPageSize;
-        const pageSlots = session.slots.slice(start, start + slotPageSize);
-
-        const slotListMsg = waSlotList(
+        const today = new Date(
+          session.rescheduleSlots[session.rescheduleSlots.length - 1].date
+        );
+        const { slots, hasMore } = await findNextAvailableSlots(
           session,
-          pageSlots,
-          session.selectedDate.label
+          today,
+          9,
+          60
         );
 
-        if (session.slots.length > start + slotPageSize) {
-          slotListMsg.interactive.action.sections[0].rows.push({
-            id: "show_more_slots",
-            title: t(session, "showMore"),
-          });
+        if (!slots.length) {
+          await sendWhatsApp(from, waError(session, "noSlotsAvailable"));
+          session.step = "AWAIT_MAIN";
+          return res.sendStatus(200);
         }
 
-        await sendWhatsApp(from, slotListMsg);
+        session.rescheduleSlots = session.rescheduleSlots.concat(slots);
+        await sendWhatsApp(
+          from,
+          waSlotListWithShowMore(session, slots, hasMore)
+        );
         return res.sendStatus(200);
       }
 
