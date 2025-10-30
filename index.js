@@ -409,7 +409,6 @@ function waDateList(session, dates, monthLabel) {
               id: d.id,
               title:
                 d.label.length > 24 ? d.label.slice(0, 21) + "..." : d.label,
-              description: t(session, "slotsAvailable"),
             })),
           },
         ],
