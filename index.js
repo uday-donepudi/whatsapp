@@ -336,11 +336,32 @@ function waServiceList(session, services) {
         sections: [
           {
             title: t(session, "services"),
-            rows: services.slice(0, 10).map((s) => ({
-              id: s.id,
-              title: s.name.length > 24 ? s.name.slice(0, 21) + "..." : s.name,
-              description: s.duration || s.service_type,
-            })),
+            rows: services.slice(0, 10).map((s) => {
+              // Format service name
+              let serviceName =
+                s.name.length > 24 ? s.name.slice(0, 21) + "..." : s.name;
+
+              // Format price if it exists
+              let priceText = "";
+              if (s.price && s.price > 0) {
+                const currency = s.currency || "INR";
+                priceText = `${currency} ${s.price}`;
+              }
+
+              // Combine duration and price for description
+              let description = s.duration || s.service_type || "";
+              if (priceText) {
+                description = description
+                  ? `${description} • ${priceText}`
+                  : priceText;
+              }
+
+              return {
+                id: s.id,
+                title: serviceName,
+                description: description.slice(0, 72), // WhatsApp limit
+              };
+            }),
           },
         ],
       },
@@ -361,7 +382,7 @@ function waStaffList(session, staffs) {
             title: t(session, "staff"),
             rows: staffs.map((s) => ({
               id: `staff_${s.id}`,
-              title: s.name,
+              title: `Dr. ${s.name}`,
             })),
           },
         ],
