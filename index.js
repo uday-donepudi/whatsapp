@@ -273,8 +273,15 @@ function waMainMenu(session) {
           {
             type: "reply",
             reply: {
-              id: "my_bookings_btn",
-              title: t(session, "myBookings"),
+              id: "book_new_btn",
+              title: t(session, "bookAppointment"),
+            },
+          },
+          {
+            type: "reply",
+            reply: {
+              id: "manage_bookings_btn",
+              title: t(session, "manageBookings"),
             },
           },
           {
@@ -290,7 +297,7 @@ function waMainMenu(session) {
   };
 }
 
-// Add the My Bookings submenu function
+// Add the Reschedule & Cancel submenu function (keep the existing one)
 function waMyBookingsMenu(session) {
   return {
     type: "interactive",
@@ -299,13 +306,6 @@ function waMyBookingsMenu(session) {
       body: { text: t(session, "myBookingsMenu") },
       action: {
         buttons: [
-          {
-            type: "reply",
-            reply: {
-              id: "book_new_btn",
-              title: t(session, "bookAppointment"),
-            },
-          },
           {
             type: "reply",
             reply: { id: "reschedule_btn", title: t(session, "reschedule") },
@@ -362,7 +362,6 @@ function waStaffList(session, staffs) {
             rows: staffs.map((s) => ({
               id: `staff_${s.id}`,
               title: s.name,
-              description: s.email || s.phone || "",
             })),
           },
         ],
@@ -451,15 +450,26 @@ function waTextPrompt(session, key) {
 
 function waConfirmation(session, details) {
   return {
-    type: "text",
-    text: {
-      body:
-        `✅ ${t(session, "bookingConfirmed")}\n` +
-        `${t(session, "service")}: ${details.service}\n` +
-        `${t(session, "date")}: ${details.date}\n` +
-        `${t(session, "time")}: ${details.time}\n` +
-        `${t(session, "reference")}: ${details.ref}\n` +
-        (details.url ? `${t(session, "viewDetails")}: ${details.url}` : ""),
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text:
+          `✅ ${t(session, "bookingConfirmed")}\n` +
+          `${t(session, "service")}: ${details.service}\n` +
+          `${t(session, "date")}: ${details.date}\n` +
+          `${t(session, "time")}: ${details.time}\n` +
+          `${t(session, "reference")}: ${details.ref}\n` +
+          (details.url ? `${t(session, "viewDetails")}: ${details.url}` : ""),
+      },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
+        ],
+      },
     },
   };
 }
@@ -784,47 +794,48 @@ function waPaymentRequired(session, paymentUrl, service) {
   const currency = service.currency || "INR";
 
   return {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: {
-        text:
-          `💳 ${t(session, "paymentRequired")}\n\n` +
-          `${t(session, "service")}: ${service.name}\n` +
-          `${t(session, "amount")}: ${currency} ${amount}\n` +
-          `${t(session, "date")}: ${session.selectedDate.label}\n` +
-          `${t(session, "time")}: ${session.selectedSlot.time}\n\n` +
-          `${t(session, "paymentLink")}: ${paymentUrl}`,
-      },
-      action: {
-        buttons: [
-          {
-            type: "reply",
-            reply: { id: "payment_done", title: t(session, "paid") },
-          },
-        ],
-      },
+    type: "text",
+    text: {
+      body:
+        `💳 ${t(session, "paymentRequired")}\n\n` +
+        `${t(session, "service")}: ${service.name}\n` +
+        `${t(session, "amount")}: ${currency} ${amount}\n` +
+        `${t(session, "date")}: ${session.selectedDate.label}\n` +
+        `${t(session, "time")}: ${session.selectedSlot.time}\n\n` +
+        `🔗 ${t(session, "clickToPayNow")}:\n${paymentUrl}\n\n` +
+        `⏳ ${t(session, "autoCheckingPayment")}`,
     },
   };
 }
 
 function waPaymentPending(session) {
   return {
+    type: "text",
+    text: {
+      body: `⏳ ${t(session, "stillCheckingPayment")}\n\n${t(
+        session,
+        "pleaseCompletePayment"
+      )}`,
+    },
+  };
+}
+
+function waPaymentTimeout(session) {
+  return {
     type: "interactive",
     interactive: {
       type: "button",
       body: {
-        text: t(session, "paymentPending"),
+        text: `⏱️ ${t(session, "paymentTimeout")}\n\n${t(
+          session,
+          "paymentNotDetected"
+        )}`,
       },
       action: {
         buttons: [
           {
             type: "reply",
-            reply: { id: "payment_done", title: t(session, "paid") },
-          },
-          {
-            type: "reply",
-            reply: { id: "cancel_booking", title: t(session, "cancel") },
+            reply: { id: "home_btn", title: t(session, "home") },
           },
         ],
       },
@@ -906,8 +917,25 @@ app.post("/webhook", async (req, res) => {
     ) {
       const btnId = msg.interactive.button_reply.id;
 
-      // Handle "My Bookings" button
-      if (btnId === "my_bookings_btn") {
+      // Handle "Book New Appointment" button directly
+      if (btnId === "book_new_btn") {
+        const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
+        const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
+
+        if (status === 200 && data?.response?.returnvalue?.data?.length) {
+          const services = data.response.returnvalue.data;
+          session.services = services;
+          session.step = "AWAIT_SERVICE";
+          await sendWhatsApp(from, waServiceList(session, services));
+          return res.sendStatus(200);
+        } else {
+          await sendWhatsApp(from, waError(session, "noServices"));
+          return res.sendStatus(200);
+        }
+      }
+
+      // Handle "Reschedule & Cancel" button - show submenu
+      if (btnId === "manage_bookings_btn") {
         session.step = "AWAIT_BOOKING_MENU";
         await sendWhatsApp(from, waMyBookingsMenu(session));
         return res.sendStatus(200);
@@ -927,7 +955,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
-    // 3A. HANDLE MY BOOKINGS SUBMENU BUTTONS
+    // 3A. HANDLE RESCHEDULE & CANCEL SUBMENU BUTTONS (KEEP THIS)
     // ===========================
     if (
       session.step === "AWAIT_BOOKING_MENU" &&
@@ -935,23 +963,6 @@ app.post("/webhook", async (req, res) => {
       msg.interactive.button_reply
     ) {
       const btnId = msg.interactive.button_reply.id;
-
-      // Handle "Book New Appointment" button
-      if (btnId === "book_new_btn") {
-        const serviceUrl = `${ZOHO_BASE}/services?workspace_id=${WORKSPACE_ID}`;
-        const { status, data } = await fetchZoho(serviceUrl, {}, 3, session);
-
-        if (status === 200 && data?.response?.returnvalue?.data?.length) {
-          const services = data.response.returnvalue.data;
-          session.services = services;
-          session.step = "AWAIT_SERVICE";
-          await sendWhatsApp(from, waServiceList(session, services));
-          return res.sendStatus(200);
-        } else {
-          await sendWhatsApp(from, waError(session, "noServices"));
-          return res.sendStatus(200);
-        }
-      }
 
       // Handle "Reschedule" button
       if (btnId === "reschedule_btn") {
@@ -1104,7 +1115,6 @@ app.post("/webhook", async (req, res) => {
     // 4. HELP: HOME BUTTON
     // ===========================
     if (
-      session.step === "AWAIT_HELP" &&
       msg.type === "interactive" &&
       msg.interactive.button_reply?.id === "home_btn"
     ) {
@@ -1624,14 +1634,76 @@ app.post("/webhook", async (req, res) => {
           return res.sendStatus(200);
         }
 
-        // Store payment URL and mark as awaiting payment
+        // Store payment URL and start time
         session.paymentUrl = paymentUrl;
+        session.paymentStartTime = Date.now();
         session.step = "AWAIT_PAYMENT";
 
+        // Send payment link
         await sendWhatsApp(
           from,
           waPaymentRequired(session, paymentUrl, service)
         );
+
+        // ✅ Start automatic payment checking (every 10 seconds for 1 minute)
+        const checkInterval = 10000; // 10 seconds
+        const maxDuration = 60000; // 1 minute
+        const maxAttempts = Math.floor(maxDuration / checkInterval);
+
+        let attemptCount = 0;
+
+        const paymentChecker = setInterval(async () => {
+          attemptCount++;
+          log(
+            `🔍 Payment check attempt ${attemptCount}/${maxAttempts} for session ${session.id}`
+          );
+
+          // Check if session still exists and is waiting for payment
+          const currentSession = sessions.get(from);
+          if (
+            !currentSession ||
+            currentSession.step !== "AWAIT_PAYMENT" ||
+            currentSession.id !== session.id
+          ) {
+            log("❌ Session changed or cleared, stopping payment checker");
+            clearInterval(paymentChecker);
+            return;
+          }
+
+          // Verify payment status
+          const paymentVerified = await verifyStripePayment(currentSession);
+
+          if (paymentVerified) {
+            log("✅ Payment verified! Creating appointment...");
+            clearInterval(paymentChecker);
+            await createZohoAppointment(currentSession, from);
+            return;
+          }
+
+          // If max attempts reached, timeout
+          if (attemptCount >= maxAttempts) {
+            log("⏱️ Payment timeout reached");
+            clearInterval(paymentChecker);
+
+            // Check one final time
+            const finalCheck = await verifyStripePayment(currentSession);
+            if (finalCheck) {
+              log("✅ Payment verified on final check!");
+              await createZohoAppointment(currentSession, from);
+            } else {
+              log("❌ Payment not completed within timeout");
+              await sendWhatsApp(from, waPaymentTimeout(currentSession));
+              clearSession(from);
+            }
+            return;
+          }
+
+          // Send periodic update (every 30 seconds)
+          if (attemptCount % 3 === 0) {
+            await sendWhatsApp(from, waPaymentPending(currentSession));
+          }
+        }, checkInterval);
+
         return res.sendStatus(200);
       }
 
@@ -1641,53 +1713,10 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ===========================
-    // 14. PAYMENT CONFIRMATION CHECK
+    // 14. PAYMENT - REMOVE THIS ENTIRE SECTION
     // ===========================
-    if (session.step === "AWAIT_PAYMENT") {
-      // Handle "Paid" button click
-      if (
-        msg.type === "interactive" &&
-        msg.interactive.button_reply?.id === "payment_done"
-      ) {
-        // Verify payment status with Stripe
-        const paymentVerified = await verifyStripePayment(session);
-
-        if (paymentVerified) {
-          await createZohoAppointment(session, from);
-          return res.sendStatus(200);
-        } else {
-          await sendWhatsApp(from, waPaymentPending(session));
-          return res.sendStatus(200);
-        }
-      }
-
-      // Handle text input (backward compatibility)
-      if (msg.type === "text") {
-        const userText = msg.text.body.trim().toLowerCase();
-
-        // Check if user is asking about payment status
-        if (
-          userText.includes("paid") ||
-          userText.includes("completed") ||
-          userText.includes("done")
-        ) {
-          // Verify payment status with Stripe
-          const paymentVerified = await verifyStripePayment(session);
-
-          if (paymentVerified) {
-            await createZohoAppointment(session, from);
-            return res.sendStatus(200);
-          } else {
-            await sendWhatsApp(from, waPaymentPending(session));
-            return res.sendStatus(200);
-          }
-        }
-
-        // If user sends any other message, remind them about payment
-        await sendWhatsApp(from, waPaymentPending(session));
-        return res.sendStatus(200);
-      }
-    }
+    // DELETE: The old AWAIT_PAYMENT handler is no longer needed
+    // Payment is now handled automatically in the background
 
     // ===========================
     // HELP FLOW: collect name, email, message -> create Zoho Desk ticket
@@ -2774,9 +2803,20 @@ function waAppointmentList(session, appointments, page, purpose) {
 
 function waSuccessMessage(session, messageKey) {
   return {
-    type: "text",
-    text: {
-      body: `✅ ${t(session, messageKey)}`,
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text: `✅ ${t(session, messageKey)}`,
+      },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
+        ],
+      },
     },
   };
 }

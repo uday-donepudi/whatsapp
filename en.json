@@ -1,11 +1,11 @@
 {
-  "mainMenuWelcome": "👋 Hi! How can I help you today?",
-  "myBookings": "My Bookings",
-  "help": "Help & Support",
-  "myBookingsMenu": "Book a new appointment or manage your existing bookings:",
-  "bookAppointment": "Book New",
-  "reschedule": "Reschedule",
-  "cancel": "Cancel",
+  "mainMenuWelcome": "Welcome! Choose an option:",
+  "bookAppointment": "📅 Book New",
+  "manageBookings": "🔄 Reschedule & Cancel",
+  "help": "❓ Help",
+  "myBookingsMenu": "What would you like to do?",
+  "reschedule": "🔄 Reschedule",
+  "cancel": "❌ Cancel",
   "home": "Main Menu",
   "tryAgain": "Try Again",
   "selectService": "Select a service.",
@@ -69,5 +69,11 @@
   "paymentLinkFailed": "❌ Payment link error. Try again or contact support.",
   "appointmentRescheduled": "✅ Appointment rescheduled successfully!",
   "appointmentCancelled": "✅ Appointment cancelled successfully.",
-  "selectSlotToReschedule": "Please select a slot to reschedule your appointment"
+  "selectSlotToReschedule": "Please select a slot to reschedule your appointment",
+  "clickToPayNow": "Click the link below to complete payment",
+  "autoCheckingPayment": "We'll automatically check your payment status. Please complete the payment within 1 minute.",
+  "stillCheckingPayment": "Still checking your payment...",
+  "pleaseCompletePayment": "Please complete the payment if you haven't already.",
+  "paymentTimeout": "Payment Timeout",
+  "paymentNotDetected": "We couldn't detect your payment within 1 minute. Please try booking again or contact support if you've already paid."
 }
