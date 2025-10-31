@@ -326,10 +326,7 @@ function waServiceList(session, services) {
     interactive: {
       type: "list",
       body: {
-        text:
-          t(session, "selectService") +
-          "\n\n👇 " +
-          t(session, "tapButtonBelow"),
+        text: t(session, "selectService"),
       },
       action: {
         button: t(session, "chooseService"),
@@ -808,21 +805,6 @@ async function createStripePaymentLink(session, service) {
   }
 }
 
-function waPaymentRequired(session, paymentUrl, service) {
-  const amount = service.price || 0;
-  const currency = service.currency || "INR";
-
-  return {
-    type: "text",
-    text: {
-      body:
-        `💳 *Please complete your payment to confirm the booking.*\n\n` +
-        `🔗 *Click below to pay now:*\n${paymentUrl}\n\n` +
-        `⏳ ${t(session, "autoCheckingPayment")}`,
-    },
-  };
-}
-
 function waBookingConfirmation(session, requiresPayment) {
   const service = session.selectedService;
   const amount = service.price || 0;
@@ -885,6 +867,59 @@ function waBookingConfirmation(session, requiresPayment) {
               id: "cancel_booking",
               title: "❌ Cancel",
             },
+          },
+        ],
+      },
+    },
+  };
+}
+
+function waPaymentRequired(session, paymentUrl, service) {
+  const amount = service.price || 0;
+  const currency = service.currency || "INR";
+
+  return {
+    type: "text",
+    text: {
+      body:
+        `💳 *Please complete your payment to confirm the booking.*\n\n` +
+        `*Service:* ${service.name}\n` +
+        `*Amount:* ${currency} ${amount}\n` +
+        `*Date & Time:* ${session.selectedDate.label} ${session.selectedSlot.time}\n\n` +
+        `🔗 *Click below to pay now:*\n${paymentUrl}\n\n` +
+        `⏳ ${t(session, "autoCheckingPayment")}`,
+    },
+  };
+}
+
+function waPaymentPending(session) {
+  return {
+    type: "text",
+    text: {
+      body: `⏳ ${t(session, "stillCheckingPayment")}\n\n${t(
+        session,
+        "pleaseCompletePayment"
+      )}`,
+    },
+  };
+}
+
+function waPaymentTimeout(session) {
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text: `⏱️ ${t(session, "paymentTimeout")}\n\n${t(
+          session,
+          "paymentNotDetected"
+        )}`,
+      },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
           },
         ],
       },
