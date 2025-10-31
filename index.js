@@ -243,7 +243,7 @@ function waLanguageSelection() {
     interactive: {
       type: "list",
       body: {
-        text: "Hello! Welcome to DSH\n Are you looking to book an appointment with a dental doctor?",
+        text: "Hello! Welcome to DSH\nAre you looking to book an appointment with a dental doctor?",
       },
       action: {
         button: "Choose Language",
