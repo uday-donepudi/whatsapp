@@ -243,7 +243,7 @@ function waLanguageSelection() {
     interactive: {
       type: "list",
       body: {
-        text: "Welcome! Let’s get your booking started.",
+        text: "Hello! Welcome to DSH\n Are you looking to book an appointment with a dental doctor?",
       },
       action: {
         button: "Choose Language",
@@ -477,8 +477,6 @@ function waConfirmation(session, details) {
       body: {
         text:
           `✅ ${t(session, "bookingConfirmed")}\n` +
-          `${t(session, "service")}: ${details.service}\n` +
-          `${t(session, "date")}: ${details.date}\n` +
           `${t(session, "time")}: ${details.time}\n` +
           `${t(session, "reference")}: ${details.ref}\n` +
           (details.url ? `${t(session, "viewDetails")}: ${details.url}` : ""),
@@ -818,45 +816,75 @@ function waPaymentRequired(session, paymentUrl, service) {
     type: "text",
     text: {
       body:
-        `💳 ${t(session, "paymentRequired")}\n\n` +
-        `${t(session, "service")}: ${service.name}\n` +
-        `${t(session, "amount")}: ${currency} ${amount}\n` +
-        `${t(session, "date")}: ${session.selectedDate.label}\n` +
-        `${t(session, "time")}: ${session.selectedSlot.time}\n\n` +
-        `🔗 ${t(session, "clickToPayNow")}:\n${paymentUrl}\n\n` +
+        `💳 *Please complete your payment to confirm the booking.*\n\n` +
+        `🔗 *Click below to pay now:*\n${paymentUrl}\n\n` +
         `⏳ ${t(session, "autoCheckingPayment")}`,
     },
   };
 }
 
-function waPaymentPending(session) {
-  return {
-    type: "text",
-    text: {
-      body: `⏳ ${t(session, "stillCheckingPayment")}\n\n${t(
-        session,
-        "pleaseCompletePayment"
-      )}`,
-    },
-  };
-}
+function waBookingConfirmation(session, requiresPayment) {
+  const service = session.selectedService;
+  const amount = service.price || 0;
+  const currency = service.currency || "INR";
 
-function waPaymentTimeout(session) {
+  // Get staff/doctor name if available
+  let doctorName = "Not assigned";
+  if (session.selectedStaff && session.staffs) {
+    const staff = session.staffs.find((s) => s.id === session.selectedStaff);
+    if (staff) {
+      doctorName = `Dr. ${staff.name}`;
+    }
+  } else if (
+    session.selectedService.assigned_staffs?.length > 0 &&
+    session.staffs
+  ) {
+    const staff = session.staffs.find(
+      (s) => s.id === session.selectedService.assigned_staffs[0]
+    );
+    if (staff) {
+      doctorName = `Dr. ${staff.name}`;
+    }
+  }
+
+  let confirmationText =
+    `📋 *Here's a summary of your booking details:*\n\n` +
+    `*Name:* ${session.customerName}\n` +
+    `*Service:* ${service.name}\n` +
+    `*Date & Time:* ${session.selectedDate.label} ${session.selectedSlot.time}\n` +
+    `*Doctor:* ${doctorName}\n`;
+
+  if (requiresPayment) {
+    confirmationText += `*Amount:* ${currency} ${amount}\n`;
+  }
+
+  confirmationText += `\n❓ ${t(
+    session,
+    requiresPayment ? "proceedToPayment" : "confirmToBook"
+  )}`;
+
   return {
     type: "interactive",
     interactive: {
       type: "button",
       body: {
-        text: `⏱️ ${t(session, "paymentTimeout")}\n\n${t(
-          session,
-          "paymentNotDetected"
-        )}`,
+        text: confirmationText,
       },
       action: {
         buttons: [
           {
             type: "reply",
-            reply: { id: "home_btn", title: t(session, "home") },
+            reply: {
+              id: "confirm_booking",
+              title: requiresPayment ? "✅ Proceed to Payment" : "✅ Confirm",
+            },
+          },
+          {
+            type: "reply",
+            reply: {
+              id: "cancel_booking",
+              title: "❌ Cancel",
+            },
           },
         ],
       },
@@ -1574,6 +1602,7 @@ app.post("/webhook", async (req, res) => {
       session.selectedSlot = slotObj;
 
       // Proceed to collect customer details
+      await sendWhatsApp(from, waTextPrompt(session, "collectingDetails"));
       await sendWhatsApp(from, waTextPrompt(session, "enterName"));
       session.step = "AWAIT_NAME";
       session.nameAttempts = 0;
@@ -1666,10 +1695,10 @@ app.post("/webhook", async (req, res) => {
           waPaymentRequired(session, paymentUrl, service)
         );
 
-        // ✅ Start automatic payment checking (every 10 seconds for 1 minute)
+        // ✅ Start automatic payment checking (every 10 seconds for 3 minutes)
         const checkInterval = 10000; // 10 seconds
-        const maxDuration = 60000; // 1 minute
-        const maxAttempts = Math.floor(maxDuration / checkInterval);
+        const maxDuration = 180000; // 3 minutes (changed from 60000)
+        const maxAttempts = Math.floor(maxDuration / checkInterval); // 18 attempts
 
         let attemptCount = 0;
 
@@ -1719,8 +1748,8 @@ app.post("/webhook", async (req, res) => {
             return;
           }
 
-          // Send periodic update (every 30 seconds)
-          if (attemptCount % 3 === 0) {
+          // Send periodic update (every 60 seconds - 6 checks)
+          if (attemptCount % 6 === 0) {
             await sendWhatsApp(from, waPaymentPending(currentSession));
           }
         }, checkInterval);

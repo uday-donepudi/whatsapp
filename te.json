@@ -75,5 +75,7 @@
   "stillCheckingPayment": "తనిఖీ కొనసాగుతోంది...",
   "pleaseCompletePayment": "చెల్లింపు పూర్తి చేయండి",
   "paymentTimeout": "⏰ సమయం ముగిసింది",
-  "paymentNotDetected": "చెల్లింపు కనబడలేదు"
+  "paymentNotDetected": "చెల్లింపు కనబడలేదు",
+  "proceedToPayment": "మీరు నిర్ధారించి చెల్లింపుకు కొనసాగించాలనుకుంటున్నారా?",
+  "confirmToBook": "మీరు ఈ బుకింగ్‌ను నిర్ధారించాలనుకుంటున్నారా?"
 }

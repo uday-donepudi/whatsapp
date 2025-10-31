@@ -75,5 +75,7 @@
   "stillCheckingPayment": "जांच जारी...",
   "pleaseCompletePayment": "भुगतान पूरा करें",
   "paymentTimeout": "⏰ समय समाप्त",
-  "paymentNotDetected": "भुगतान नहीं मिला"
+  "paymentNotDetected": "भुगतान नहीं मिला",
+  "proceedToPayment": "क्या आप पुष्टि करना और भुगतान के लिए आगे बढ़ना चाहेंगे?",
+  "confirmToBook": "क्या आप इस बुकिंग की पुष्टि करना चाहेंगे?"
 }
