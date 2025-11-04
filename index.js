@@ -467,16 +467,27 @@ function waTextPrompt(session, key) {
 }
 
 function waConfirmation(session, details) {
+  // Replace variables in the confirmation message
+  let confirmationMessage = t(session, "bookingConfirmed")
+    .replace("{session.customerName}", session.customerName)
+    .replace("{details.service}", details.service)
+    .replace("{details.date}", details.date);
+
+  let confirmationText =
+    `${confirmationMessage}\n\n` +
+    `${t(session, "time")}: ${details.time}\n` +
+    `${t(session, "reference")}: ${details.ref}\n`;
+
+  if (details.url) {
+    confirmationText += `${t(session, "viewDetails")}: ${details.url}`;
+  }
+
   return {
     type: "interactive",
     interactive: {
       type: "button",
       body: {
-        text:
-          `✅ ${t(session, "bookingConfirmed")}\n` +
-          `${t(session, "time")}: ${details.time}\n` +
-          `${t(session, "reference")}: ${details.ref}\n` +
-          (details.url ? `${t(session, "viewDetails")}: ${details.url}` : ""),
+        text: confirmationText,
       },
       action: {
         buttons: [

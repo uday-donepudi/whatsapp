@@ -47,7 +47,7 @@
   "cancelSuccess": "✅ रद्द सफल",
   "rescheduleFailed": "❌ रीशेड्यूल असफल",
   "cancelFailed": "❌ रद्द असफल",
-  "bookingConfirmed": "✅ बुकिंग सफल!",
+  "bookingConfirmed": "धन्यवाद, {session.customerName}! आपकी {details.service} के लिए {details.date} को अपॉइंटमेंट सफलतापूर्वक बुक हो गई है।",
   "service": "सेवा",
   "date": "तारीख",
   "time": "समय",

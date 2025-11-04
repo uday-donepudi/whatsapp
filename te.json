@@ -47,7 +47,7 @@
   "cancelSuccess": "✅ విజయవంతంగా రద్దు చేశారు",
   "rescheduleFailed": "❌ మార్చడం విఫలమైంది",
   "cancelFailed": "❌ రద్దు విఫలమైంది",
-  "bookingConfirmed": "✅ బుకింగ్ విజయవంతం!",
+  "bookingConfirmed": "ధన్యవాదాలు, {session.customerName}! మీ {details.service} కోసం {details.date}న అపాయింట్‌మెంట్ విజయవంతంగా బుక్ చేయబడింది.",
   "service": "సేవ",
   "date": "తేదీ",
   "time": "సమయం",
