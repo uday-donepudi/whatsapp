@@ -2249,17 +2249,17 @@ app.post("/webhook", async (req, res) => {
       ).padStart(2, "0")}:00`;
 
       // Reschedule the appointment
-      const success = await rescheduleZohoAppointment(
+      const result = await rescheduleZohoAppointment(
         session,
         session.rescheduleBookingId,
         session.rescheduleStaffId,
         startTime
       );
 
-      if (success) {
+      if (result.success) {
         await sendWhatsApp(
           from,
-          waSuccessMessage(session, "appointmentRescheduled")
+          waRescheduleSuccess(session, result.summaryUrl)
         );
       } else {
         await sendWhatsApp(from, waError(session, "rescheduleFailed"));
@@ -2306,13 +2306,10 @@ app.post("/webhook", async (req, res) => {
       const bookingId = parts[2]; // "cancel_appt_#HE-00012_..."
 
       // Cancel the appointment
-      const success = await cancelZohoAppointment(session, bookingId);
+      const result = await cancelZohoAppointment(session, bookingId);
 
-      if (success) {
-        await sendWhatsApp(
-          from,
-          waSuccessMessage(session, "appointmentCancelled")
-        );
+      if (result.success) {
+        await sendWhatsApp(from, waCancelSuccess(session, result.summaryUrl));
       } else {
         await sendWhatsApp(from, waError(session, "cancelFailed"));
       }
@@ -2342,6 +2339,7 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   } catch (error) {
     log("Webhook error:", error);
+
     res.sendStatus(500);
   }
 });
@@ -2921,6 +2919,31 @@ async function cancelZohoAppointment(session, bookingId) {
   try {
     const zohoToken = await getSessionZohoToken(session);
 
+    // ✅ First, fetch the appointment details to get summary URL
+    const fetchResp = await fetch(
+      `${ZOHO_BASE}/appointment?booking_id=${bookingId}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Zoho-oauthtoken ${zohoToken}`,
+        },
+      }
+    );
+
+    const fetchText = await fetchResp.text();
+    let appointmentDetails = null;
+    let summaryUrl = null;
+
+    try {
+      const fetchData = JSON.parse(fetchText);
+      appointmentDetails = fetchData?.response?.returnvalue;
+      summaryUrl =
+        appointmentDetails?.summary_url || appointmentDetails?.appointment_url;
+      log("Fetched appointment details before cancel:", appointmentDetails);
+    } catch (err) {
+      log("Failed to fetch appointment details:", err);
+    }
+
     // ✅ Use FormData with updateappointment endpoint and action="cancel"
     const formData = new FormData();
     formData.append("booking_id", bookingId);
@@ -2936,7 +2959,6 @@ async function cancelZohoAppointment(session, bookingId) {
       method: "POST",
       headers: {
         Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        // Don't set Content-Type - FormData sets it automatically with boundary
       },
       body: formData,
     });
@@ -2950,9 +2972,8 @@ async function cancelZohoAppointment(session, bookingId) {
       data = text ? JSON.parse(text) : {};
     } catch (parseErr) {
       log("Zoho cancel JSON parse error:", parseErr.message);
-      // If response is empty but status is 200/204, consider it success
       if (resp.status === 200 || resp.status === 204) {
-        return true;
+        return { success: true, summaryUrl };
       }
       data = { parseError: true, raw: text };
     }
@@ -2960,16 +2981,17 @@ async function cancelZohoAppointment(session, bookingId) {
     log("Zoho cancel appointment", resp.status, JSON.stringify(data));
 
     // ✅ Check for success
-    return (
+    const success =
       (resp.status === 200 || resp.status === 204) &&
       (data?.response?.status === "success" ||
         Object.keys(data).length === 0 ||
-        !data.response?.status || // If no status field, assume success on 200
-        data.response?.errormessage === undefined) // No error message
-    );
+        !data.response?.status ||
+        data.response?.errormessage === undefined);
+
+    return { success, summaryUrl };
   } catch (err) {
     log("Zoho cancel appointment error:", err);
-    return false;
+    return { success: false, summaryUrl: null };
   }
 }
 
@@ -2990,23 +3012,21 @@ async function rescheduleZohoAppointment(
     }
 
     // Parse start_time to create end_time in the same format
-    // startTime format: "2025-10-30 10:30:00"
     const startDate = new Date(startTime.replace(/-/g, "/"));
     const endDate = new Date(startDate.getTime() + duration * 60000);
 
-    // Format end time in the same format as start time: "YYYY-MM-DD HH:mm:ss"
+    // Format end time
     const endTime = `${endDate.getFullYear()}-${String(
       endDate.getMonth() + 1
     ).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")} ${String(
       endDate.getHours()
     ).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}:00`;
 
-    // ✅ Use FormData like in your curl command
+    // ✅ Use FormData
     const formData = new FormData();
     formData.append("booking_id", bookingId);
     formData.append("staff_id", staffId);
     formData.append("start_time", startTime);
-    // Note: end_time is optional, Zoho will calculate it automatically
 
     log("Zoho reschedule params:", {
       booking_id: bookingId,
@@ -3016,12 +3036,10 @@ async function rescheduleZohoAppointment(
       duration: `${duration} mins`,
     });
 
-    // ✅ Use the correct endpoint: rescheduleappointment (not reschedulebooking)
     const resp = await fetch(`${ZOHO_BASE}/rescheduleappointment`, {
       method: "POST",
       headers: {
         Authorization: `Zoho-oauthtoken ${zohoToken}`,
-        // Don't set Content-Type - FormData sets it automatically with boundary
       },
       body: formData,
     });
@@ -3035,24 +3053,83 @@ async function rescheduleZohoAppointment(
       data = text ? JSON.parse(text) : {};
     } catch (parseErr) {
       log("Zoho reschedule JSON parse error:", parseErr.message);
-      // If response is empty but status is 200, consider it success
       if (resp.status === 200 || resp.status === 204) {
-        return true;
+        return { success: true, summaryUrl: null };
       }
       data = { parseError: true, raw: text };
     }
 
     log("Zoho reschedule appointment", resp.status, JSON.stringify(data));
 
+    // Extract summary URL from response
+    const summaryUrl =
+      data?.response?.returnvalue?.summary_url ||
+      data?.response?.returnvalue?.appointment_url ||
+      null;
+
     // Check for success
-    return (
+    const success =
       (resp.status === 200 || resp.status === 204) &&
       (data?.response?.status === "success" ||
         data?.response?.returnvalue?.status === "upcoming" ||
-        Object.keys(data).length === 0)
-    );
+        Object.keys(data).length === 0);
+
+    return { success, summaryUrl };
   } catch (err) {
     log("Zoho reschedule appointment error:", err);
-    return false;
+    return { success: false, summaryUrl: null };
   }
+}
+
+// Update the success message functions to include URL
+function waRescheduleSuccess(session, summaryUrl) {
+  let message = `✅ ${t(session, "rescheduleSuccess")}`;
+
+  if (summaryUrl) {
+    message += `\n\n${t(session, "viewDetails")}: ${summaryUrl}`;
+  }
+
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text: message,
+      },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
+        ],
+      },
+    },
+  };
+}
+
+function waCancelSuccess(session, summaryUrl) {
+  let message = `✅ ${t(session, "cancelSuccess")}`;
+
+  if (summaryUrl) {
+    message += `\n\n${t(session, "viewDetails")}: ${summaryUrl}`;
+  }
+
+  return {
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: {
+        text: message,
+      },
+      action: {
+        buttons: [
+          {
+            type: "reply",
+            reply: { id: "home_btn", title: t(session, "home") },
+          },
+        ],
+      },
+    },
+  };
 }
